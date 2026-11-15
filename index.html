@@ -1,0 +1,782 @@
+<!doctype html>
+<html lang="bg">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#1f5f5b">
+<title>Срокове</title>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<style>
+  :root {
+    --bg: #f3f4f1; --card: #fff; --ink: #1d2329; --muted: #68717a; --line: #e2e5e0;
+    --accent: #1f5f5b; --red: #b3261e; --red-soft: #fbe9e7; --amber: #9a5b00; --amber-soft: #fdf1dc;
+    --green: #2e7d4f; --green-soft: #e4f3ea; --grey-soft: #eceeea;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  [hidden] { display: none !important; }
+  button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; text-align: inherit; }
+
+  /* sign-in */
+  #login { min-height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; text-align: center; }
+  #login h1 { color: var(--accent); margin: 0 0 6px; font-size: 26px; }
+  #login p { color: var(--muted); margin: 0 0 16px; }
+  #login-msg { margin-top: 16px; background: var(--red-soft); color: var(--red); border-radius: 10px; padding: 8px 14px; }
+
+  /* frame: phone first */
+  #app { height: 100%; display: flex; flex-direction: column; }
+  .pane { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
+  #app.has-panel #main, #app:not(.has-panel) #panel { display: none; }
+  .bar { background: var(--accent); color: #fff; padding: 13px 14px; display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 17px; flex: none; }
+  .bar .back { font-size: 26px; line-height: 18px; padding: 4px 8px 6px 2px; }
+  .bar .ttl { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bar .act { font-weight: 500; font-size: 14px; padding: 4px 2px; white-space: nowrap; }
+  .body { flex: 1; overflow-y: auto; padding: 12px 12px 90px; -webkit-overflow-scrolling: touch; }
+  #tabs { flex: none; display: flex; background: #fff; border-top: 1px solid var(--line); order: 3; padding-bottom: env(safe-area-inset-bottom); }
+  #tabs .logo, #tabs .who { display: none; }
+  #tabs button { flex: 1; text-align: center; padding: 8px 0 9px; font-size: 12px; color: var(--muted); }
+  #tabs button i { display: block; font-style: normal; font-size: 18px; line-height: 1.2; }
+  #tabs button.on { color: var(--accent); font-weight: 600; }
+  #app.in-form #tabs { display: none; }
+  .fab { position: fixed; right: 16px; bottom: calc(72px + env(safe-area-inset-bottom)); background: var(--accent); color: #fff; border-radius: 28px; padding: 13px 18px; font-weight: 600; box-shadow: 0 4px 10px rgba(0,0,0,.25); }
+  .desk { display: none; }
+
+  /* pieces */
+  .sum { display: flex; gap: 8px; margin-bottom: 10px; }
+  .sum div { flex: 1; border-radius: 10px; padding: 8px 6px; text-align: center; font-size: 12px; }
+  .sum b { display: block; font-size: 20px; line-height: 1.1; }
+  .s-red { background: var(--red-soft); color: var(--red); } .s-amber { background: var(--amber-soft); color: var(--amber); } .s-grey { background: var(--grey-soft); color: #454c53; }
+  .chips { display: flex; gap: 6px; margin-bottom: 10px; overflow-x: auto; scrollbar-width: none; }
+  .chips::-webkit-scrollbar { display: none; }
+  .chips.wrap { flex-wrap: wrap; margin-bottom: 0; }
+  .chip { flex: none; border: 1px solid var(--line); background: #fff; border-radius: 16px; padding: 6px 13px; font-size: 13px; color: #3c444b; white-space: nowrap; }
+  .chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .chip.off { color: #9aa1a7; border-style: dashed; }
+  .card { width: 100%; background: var(--card); border-radius: 12px; padding: 10px 12px 10px 14px; margin-bottom: 8px; border-left: 5px solid var(--green); display: flex; gap: 10px; align-items: center; }
+  .card.red { border-left-color: var(--red); } .card.amber { border-left-color: var(--amber); } .card.grey { border-left-color: #a9afb5; }
+  .card.sel { outline: 2px solid var(--accent); }
+  .card .t { font-weight: 600; } .card .o { font-size: 13px; color: var(--muted); }
+  .card .r { margin-left: auto; text-align: right; font-size: 13px; white-space: nowrap; }
+  .card .r b { display: block; }
+  .card.red .r b { color: var(--red); } .card.amber .r b { color: var(--amber); }
+  .sec { display: flex; justify-content: space-between; align-items: baseline; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 16px 2px 6px; font-weight: 600; }
+  .sec:first-child { margin-top: 2px; }
+  .sec button, .link { color: var(--accent); font-weight: 600; text-transform: none; letter-spacing: 0; font-size: 13px; }
+  .box { background: var(--card); border-radius: 12px; padding: 2px 12px; margin-bottom: 8px; }
+  .kv { display: flex; justify-content: space-between; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+  .kv:last-child, .li:last-child { border-bottom: 0; }
+  .kv > span:first-child { color: var(--muted); flex: none; } .kv > span:last-child { text-align: right; }
+  .pill { display: inline-block; border-radius: 10px; padding: 1px 8px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .p-red { background: var(--red-soft); color: var(--red); } .p-amber { background: var(--amber-soft); color: var(--amber); }
+  .p-green { background: var(--green-soft); color: var(--green); } .p-grey { background: var(--grey-soft); color: #454c53; border: 1px dashed #a9afb5; }
+  .li { width: 100%; display: flex; align-items: center; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+  .li > div { flex: 1; min-width: 0; } .li small { color: var(--muted); display: block; font-size: 12px; }
+  .li .go { color: #a9afb5; font-size: 18px; } .li.dim > div { color: #9aa1a7; }
+  .btn { display: block; width: 100%; text-align: center; border-radius: 10px; padding: 12px; font-weight: 600; margin-top: 8px; background: var(--accent); color: #fff; border: 1px solid var(--accent); }
+  .btn.ghost { background: #fff; color: var(--accent); } .btn.danger { background: #fff; color: var(--red); border-color: var(--red); }
+  .btn.small { display: inline-block; width: auto; padding: 4px 10px; font-size: 12px; margin: 0; border-radius: 8px; }
+  .btn[disabled] { opacity: .55; }
+  .btns { display: flex; gap: 8px; }
+  .hint { font-size: 12px; color: var(--muted); margin: 4px 2px 0; }
+  .empty { text-align: center; color: var(--muted); padding: 28px 10px; }
+  .err { background: var(--red-soft); color: var(--red); border-radius: 10px; padding: 9px 12px; margin: 12px 0 0; font-size: 14px; }
+
+  /* forms */
+  label.f { display: block; font-size: 12px; color: var(--muted); margin: 10px 2px 3px; }
+  input[type=text], input[type=date], input[type=number], select { width: 100%; background: #fff; color: var(--ink); border: 1px solid #c9cec8; border-radius: 9px; padding: 10px 11px; font: inherit; font-size: 16px; min-height: 44px; }
+  input:disabled, select:disabled { background: var(--grey-soft); color: #7d858c; opacity: 1; }
+  .two { display: flex; gap: 8px; } .two > div { flex: 1; min-width: 0; }
+  .sw { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 2px; border-bottom: 1px solid var(--line); }
+  .sw.dis { color: #9aa1a7; }
+  .sw input { appearance: none; -webkit-appearance: none; width: 42px; height: 24px; border-radius: 12px; background: #c3c8c2; position: relative; margin: 0; flex: none; transition: background .15s; }
+  .sw input::after { content: ""; position: absolute; top: 2px; left: 2px; width: 20px; height: 20px; border-radius: 50%; background: #fff; transition: left .15s; }
+  .sw input:checked { background: var(--accent); } .sw input:checked::after { left: 20px; }
+  .sw input:disabled { opacity: .5; }
+  #toast { position: fixed; left: 50%; bottom: 90px; transform: translateX(-50%); background: #20262b; color: #fff; padding: 9px 16px; border-radius: 20px; font-size: 14px; max-width: 90%; white-space: nowrap; z-index: 9; }
+
+  /* computer */
+  @media (min-width: 900px) {
+    #app { flex-direction: row; }
+    #tabs { order: 0; width: 200px; flex-direction: column; background: var(--accent); border: 0; padding: 18px 12px; }
+    #tabs .logo { display: block; color: #fff; font-weight: 700; font-size: 18px; margin: 0 6px 18px; }
+    #tabs button { flex: none; text-align: left; color: #fff; opacity: .85; font-size: 15px; padding: 9px 10px; border-radius: 8px; margin-bottom: 4px; }
+    #tabs button i { display: inline; font-size: 15px; margin-right: 8px; }
+    #tabs button.on { color: #fff; opacity: 1; background: rgba(255,255,255,.18); }
+    #tabs .who { display: block; margin-top: auto; color: #fff; opacity: .85; font-size: 13px; padding: 0 10px; }
+    #app.in-form #tabs { display: flex; }
+    #app.has-panel #main, #app:not(.has-panel) #panel { display: flex; }
+    #main .bar { background: none; color: var(--ink); font-size: 20px; padding: 18px 20px 4px; }
+    #main .bar .act { color: var(--accent); font-weight: 600; }
+    #main .body { padding: 12px 20px 30px; max-width: 820px; }
+    #panel { flex: none; width: 420px; background: #fff; border-left: 1px solid var(--line); }
+    #panel:empty { display: none !important; }
+    #panel .bar { background: none; color: var(--ink); padding: 18px 16px 4px; }
+    #panel .bar .act { color: var(--accent); font-weight: 600; }
+    #panel .body { padding: 10px 16px 30px; }
+    #panel .box { background: var(--bg); } #panel .card { background: var(--bg); }
+    .fab { display: none; } .desk { display: block; }
+    .sum { max-width: 420px; }
+    #toast { bottom: 30px; }
+  }
+</style>
+</head>
+<body>
+<div id="login">
+  <h1>Срокове</h1>
+  <p id="login-text">Влез с Google акаунта си.</p>
+  <div id="gbtn"></div>
+  <div id="login-msg" hidden></div>
+</div>
+<div id="app" hidden>
+  <nav id="tabs">
+    <div class="logo">Срокове</div>
+    <button data-tab="list"><i>◷</i>Срокове</button>
+    <button data-tab="objects"><i>▤</i>Обекти</button>
+    <button data-tab="settings"><i>⚙</i>Настройки</button>
+    <div class="who" id="who"></div>
+  </nav>
+  <section class="pane" id="main"></section>
+  <section class="pane" id="panel"></section>
+</div>
+<div id="toast" hidden></div>
+<script>
+// Deadline Tracker: the page. All data comes from the Apps Script web app; nothing personal is in this file.
+// The deployment id (s) and the OAuth client id (c) come after # in the link of the first opening and are
+// kept on the device. Every request carries a Google ID token; the page keeps no session of its own.
+(function () {
+  'use strict';
+  var CFG_KEY = 'dt-cfg';
+  var cfg = {}, idToken = '', tokenExp = 0, waiters = [];
+  var S = null;                         // the last state from the server
+  var stack = [{ v: 'list' }];          // stack[0] is the tab, the top is the open screen
+  var F = { object: '', history: false, cat: '' };
+  var loadedAt = 0, busy = false, toastTimer = 0;
+  var $ = function (id) { return document.getElementById(id); };
+
+  // ---------- configuration ----------
+  try { cfg = JSON.parse(localStorage.getItem(CFG_KEY) || '{}') || {}; } catch (e) {}
+  (function () {
+    var h = new URLSearchParams(location.hash.slice(1));
+    var local = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+    if (local && h.get('t')) {
+      // Local check against dev/server.js only: no Google sign-in, the token is one the imitation knows.
+      cfg = { dev: true, url: '/exec', token: h.get('t') };
+    } else if (h.get('s') && h.get('c')) {
+      cfg = { s: h.get('s'), c: h.get('c') };
+      try { localStorage.setItem(CFG_KEY, JSON.stringify(cfg)); } catch (e) {}
+      history.replaceState(null, '', location.pathname);
+    }
+    if (cfg.s) cfg.url = 'https://script.google.com/macros/s/' + cfg.s + '/exec';
+  })();
+
+  // ---------- small helpers ----------
+  function esc(s) {
+    return String(s === null || s === undefined ? '' : s).replace(/[&<>"']/g, function (ch) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch];
+    });
+  }
+  function byId(list, id) { for (var i = 0; i < list.length; i++) if (String(list[i].id) === String(id)) return list[i]; return null; }
+  function yes(v) { return String(v).toLowerCase() === 'yes'; }
+  function fmtDate(s) { var m = String(s || '').match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? m[3] + '.' + m[2] + '.' + m[1] : ''; }
+  function num(n) { return String(Math.round(Number(n))).replace(/\B(?=(\d{3})+(?!\d))/g, ' '); }
+  function days(n) { return n === 1 ? '1 ден' : n + ' дни'; }
+  function count(n, one, many) { return n + ' ' + (n === 1 ? one : many); }
+  function plate(s) { var m = String(s || '').match(/^([A-Z]{1,2})(\d{3,4})([A-Z]{1,2})$/); return m ? m[1] + ' ' + m[2] + ' ' + m[3] : String(s || ''); }
+  function person(email) {
+    var p = (S.people || []).filter(function (x) { return String(x.email).toLowerCase() === String(email || '').toLowerCase(); })[0];
+    return p ? p.name : (email || '');
+  }
+  function has(v) { return v !== '' && v !== null && v !== undefined; }
+  function typeOf(d) { return byId(S.types, d.type_id) || { name: '?' }; }
+  function objOf(d) { return byId(S.objects, d.object_id) || { name: '?' }; }
+  function catOf(o) { return byId(S.categories, o.category_id) || { name: '?' }; }
+  function toast(text) {
+    $('toast').textContent = text; $('toast').hidden = false;
+    clearTimeout(toastTimer); toastTimer = setTimeout(function () { $('toast').hidden = true; }, 2600);
+  }
+
+  // ---------- sign-in and requests ----------
+  function payload(t) {
+    try { return JSON.parse(decodeURIComponent(escape(atob(t.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))))); } catch (e) { return {}; }
+  }
+  function showLogin(msg) {
+    $('app').hidden = true; $('login').hidden = false;
+    $('login-msg').hidden = !msg; $('login-msg').textContent = msg || '';
+  }
+  function onCredential(resp) {
+    idToken = resp.credential || '';
+    tokenExp = (payload(idToken).exp || 0) * 1000;
+    if (waiters.length) { var w = waiters; waiters = []; w.forEach(function (f) { f(); }); } else start();
+  }
+  // A new token from Google without a click, when the browser allows it; otherwise the sign-in screen.
+  function newToken() {
+    return new Promise(function (resolve, reject) {
+      if (!window.google || !google.accounts) return reject(new Error('LOGIN'));
+      var done = function () { clearTimeout(timer); resolve(); };
+      var timer = setTimeout(function () {
+        waiters = waiters.filter(function (f) { return f !== done; });
+        reject(new Error('LOGIN'));
+      }, 20000);
+      waiters.push(done);
+      google.accounts.id.prompt();
+    });
+  }
+  function post(fn, data) {
+    return fetch(cfg.url, {
+      method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ fn: fn, idToken: cfg.dev ? cfg.token : idToken, data: data || {} })
+    }).then(function (r) { return r.json(); }, function () { throw new Error('Няма връзка със сървъра.'); });
+  }
+  function call(fn, data) {
+    var fresh = (cfg.dev || tokenExp - Date.now() > 60000) ? Promise.resolve() : newToken();
+    return fresh.then(function () { return post(fn, data); }).then(function (j) {
+      var expired = !j.ok && (j.error === 'Няма вход.' || j.error === 'Невалиден или изтекъл вход.');
+      return (expired && !cfg.dev) ? newToken().then(function () { return post(fn, data); }) : j;
+    }).then(function (j) {
+      if (!j.ok) throw new Error(j.error || 'Грешка.');
+      if (fn === 'state') S = j.result; else if (j.result && j.result.state) S = j.result.state;
+      loadedAt = Date.now();
+      return j.result;
+    }).catch(function (err) {
+      if (err.message === 'LOGIN') { showLogin('Входът изтече. Влез отново с бутона.'); throw new Error('Входът изтече.'); }
+      if (err.message === 'Няма достъп за този акаунт.') {
+        if (window.google && google.accounts) google.accounts.id.disableAutoSelect();
+        showLogin(err.message);
+      }
+      throw err;
+    });
+  }
+  function start() {
+    $('login').hidden = true; $('app').hidden = false;
+    if (!S) $('main').innerHTML = '<div class="bar"><span class="ttl">Срокове</span></div><div class="body"><div class="empty">Зареждане...</div></div>';
+    call('state').then(render, function (err) {
+      if (!$('app').hidden) $('main').innerHTML = '<div class="bar"><span class="ttl">Срокове</span></div><div class="body"><div class="err">' +
+        esc(err.message) + '</div><button class="btn ghost" data-act="reload">Опитай пак</button></div>';
+    });
+  }
+
+  // ---------- navigation ----------
+  function top() { return stack[stack.length - 1]; }
+  function go(view) { stack.push(view); history.pushState({ d: stack.length }, ''); render(); }
+  function back(n) { if (stack.length > 1) history.go(-(n || 1)); }
+  window.addEventListener('popstate', function (e) {
+    var d = (e.state && e.state.d) || 1;
+    if (d < stack.length) { stack.length = d; render(); }
+  });
+  function setTab(tab) { stack = [{ v: tab }]; history.replaceState({ d: 1 }, ''); render(); }
+
+  // ---------- texts for a deadline ----------
+  function stText(d) {
+    var s = d.state;
+    if (!s) return { c: 'grey', a: d.status === 'replaced' ? 'заменен' : 'закрит', b: fmtDate(d.closed_at) };
+    var km = s.km_left === null ? '' : (s.km_estimated ? 'около ' : '') + num(Math.abs(s.km_left)) + ' км';
+    if (s.state === 'expired') {
+      return s.by === 'km' ? { c: 'red', a: 'прагът е минат', b: s.km_left === 0 ? 'сега' : 'с ' + km }
+        : { c: 'red', a: 'изтекъл', b: 'преди ' + days(-s.days_left) };
+    }
+    if (s.state === 'soon') {
+      return s.by === 'km' ? { c: 'amber', a: 'остават', b: km }
+        : { c: 'amber', a: 'изтича', b: s.days_left === 0 ? 'днес' : 'след ' + days(s.days_left) };
+    }
+    if (s.days_left !== null) return { c: 'green', a: '', b: 'след ' + days(s.days_left) };
+    if (s.km_left !== null) return { c: 'green', a: 'остават', b: km };
+    return { c: 'green', a: '', b: 'валиден' };
+  }
+  function prox(d) {
+    var s = d.state, o = byId(S.objects, d.object_id), v = [];
+    if (s.days_left !== null) v.push(s.days_left);
+    if (s.km_left !== null) {
+      var perDay = o && o.odometer && o.odometer.per_day;
+      v.push(perDay > 0 ? s.km_left / perDay : (s.km_left <= 0 ? -1 : 9000));
+    }
+    return v.length ? Math.min.apply(null, v) : 99999;
+  }
+  function sortActive(list) {
+    var rank = { expired: 0, soon: 1, valid: 2 };
+    return list.slice().sort(function (a, b) { return rank[a.state.state] - rank[b.state.state] || prox(a) - prox(b); });
+  }
+  function card(d, withObject) {
+    var t = stText(d), parts = [];
+    if (withObject) parts.push(esc(objOf(d).name));
+    if (d.valid_to) parts.push('до ' + fmtDate(d.valid_to));
+    if (has(d.km_limit)) parts.push('праг ' + num(d.km_limit) + ' км');
+    var open = top().v === 'deadline' && top().id === d.id;
+    return '<button class="card ' + (t.c === 'green' ? '' : t.c) + (open ? ' sel' : '') + '" data-act="deadline" data-id="' + esc(d.id) + '"><div><div class="t">' +
+      esc(typeOf(d).name) + (d.note ? ' · ' + esc(d.note) : '') + '</div><div class="o">' + parts.join(' · ') + '</div></div><div class="r">' +
+      (t.a ? '<b>' + t.a + '</b>' : '') + t.b + '</div></button>';
+  }
+  function kv(label, html) { return '<div class="kv"><span>' + label + '</span><span>' + html + '</span></div>'; }
+
+  // ---------- screens ----------
+  // Each returns { title, action: [label, act], html }.
+  var VIEWS = {};
+
+  VIEWS.list = function () {
+    var active = S.deadlines.filter(function (d) { return d.status === 'active'; });
+    var n = function (st) { return active.filter(function (d) { return d.state.state === st; }).length; };
+    var objects = S.objects.filter(function (o) { return yes(o.active); });
+    var h = '<div class="sum"><div class="s-red"><b>' + n('expired') + '</b>' + (n('expired') === 1 ? 'изтекъл' : 'изтекли') +
+      '</div><div class="s-amber"><b>' + n('soon') + '</b>' + (n('soon') === 1 ? 'изтича скоро' : 'изтичат скоро') +
+      '</div><div class="s-grey"><b>' + S.missing_total + '</b>' + (S.missing_total === 1 ? 'липсва' : 'липсват') + '</div></div>';
+    h += '<div class="chips"><button class="chip' + (F.object ? '' : ' on') + '" data-act="filter" data-id="">Всички</button>' +
+      objects.map(function (o) {
+        return '<button class="chip' + (F.object === o.id ? ' on' : '') + '" data-act="filter" data-id="' + esc(o.id) + '">' + esc(o.name) + '</button>';
+      }).join('') + '</div>';
+    var rows = S.deadlines.filter(function (d) {
+      return (F.history ? d.status !== 'active' : d.status === 'active') && (!F.object || d.object_id === F.object);
+    });
+    rows = F.history ? rows.sort(function (a, b) { return String(b.closed_at).localeCompare(String(a.closed_at)); }) : sortActive(rows);
+    h += rows.map(function (d) { return card(d, true); }).join('') ||
+      '<div class="empty">' + (F.history ? 'Няма заменени или закрити срокове.' : (objects.length ? 'Няма активни срокове.' : 'Започни с нов обект в „Обекти“.')) + '</div>';
+    h += '<div class="hint" style="text-align:center;margin-top:12px">' + (F.history ? 'Показани са заменените и закритите' : 'Показани са активните') +
+      ' · <button class="link" data-act="history">' + (F.history ? 'Активни' : 'История') + '</button></div>';
+    if (objects.length) h += '<button class="fab" data-act="new-deadline">+ Нов срок</button>';
+    return { title: 'Срокове', action: objects.length ? ['+ Нов срок', 'new-deadline', 'desk'] : null, html: h };
+  };
+
+  VIEWS.deadline = function (p) {
+    var d = byId(S.deadlines, p.id), t = typeOf(d), o = objOf(d), st = stText(d);
+    var own = String(d.remind_days || '').trim();
+    var rec = String(d.recipients || '').split(/[,\s]+/).filter(String).map(function (id) { var x = byId(S.people, id); return x ? x.name : id; });
+    var h = '<div class="box">' +
+      kv('Състояние', '<span class="pill p-' + st.c + '">' + ((st.c === 'green' && st.b !== 'валиден' ? 'валиден · ' : '') + (st.a + ' ' + st.b).trim()) + '</span>') +
+      kv('Обект', esc(o.name) + (o.reg_number ? ' · ' + esc(plate(o.reg_number)) : '')) +
+      (d.valid_from ? kv('Валиден от', fmtDate(d.valid_from)) : '') +
+      (d.valid_to ? kv('Валиден до', fmtDate(d.valid_to)) : '') +
+      (has(d.km_limit) ? kv('Праг в километри', num(d.km_limit) + ' км') : '') +
+      (d.note ? kv('Описание', esc(d.note)) : '') +
+      (yes(t.track_date) ? kv('Напомняне', esc(own || t.remind_days) + ' дни преди' + (own ? ' (собствени)' : ' (по вида)')) : '') +
+      (yes(t.track_km) && has(d.km_limit) ? kv('По километри', num(t.km_before || 0) + ' км преди прага') : '') +
+      kv('Получатели', esc(rec.join(', '))) +
+      kv('Въведен от', esc(person(d.created_by)) + ', ' + fmtDate(d.created_at)) +
+      (d.updated_by ? kv('Поправен от', esc(person(d.updated_by)) + ', ' + fmtDate(d.updated_at)) : '') +
+      (d.status !== 'active' ? kv(d.status === 'replaced' ? 'Заменен от' : 'Закрит от', esc(person(d.closed_by)) + ', ' + fmtDate(d.closed_at)) : '') +
+      '</div>';
+    if (d.status === 'active') {
+      h += p.confirm
+        ? '<div class="err">Срокът ще бъде закрит и напомнянията за него ще спрат. Ако има нов документ, избери „Поднови“.</div>' +
+          '<div class="btns"><button class="btn ghost" data-act="close-no">Отказ</button><button class="btn danger" data-act="close-yes">Закрий срока</button></div>'
+        : '<button class="btn" data-act="renew">Поднови</button><div class="btns"><button class="btn ghost" data-act="edit-deadline">Поправи</button>' +
+          '<button class="btn danger" data-act="close-ask">Закрий</button></div>' +
+          '<div class="hint">„Поднови“ отваря нов запис за същия обект и вид; този остава в историята като заменен.</div>';
+    } else if (d.replaced_by && byId(S.deadlines, d.replaced_by)) {
+      h += '<button class="btn ghost" data-act="deadline" data-id="' + esc(d.replaced_by) + '">Виж новия срок</button>';
+    }
+    if (p.error) h += '<div class="err">' + esc(p.error) + '</div>';
+    return { title: t.name, html: h };
+  };
+
+  VIEWS.dform = function (p) {
+    var m = p.m, locked = p.mode !== 'new';
+    var objects = S.objects.filter(function (o) { return yes(o.active) || o.id === m.object_id; });
+    var o = byId(S.objects, m.object_id);
+    var types = o ? S.types.filter(function (t) { return t.category_id === o.category_id && (yes(t.active) || t.id === m.type_id); }) : [];
+    if (!byId(types, m.type_id)) m.type_id = types.length ? types[0].id : '';
+    var t = byId(types, m.type_id);
+    var h = '<label class="f">Обект</label><select data-f="object_id" data-re="1"' + (locked ? ' disabled' : '') + '>' +
+      S.categories.map(function (c) {
+        var list = objects.filter(function (x) { return x.category_id === c.id; });
+        return list.length ? '<optgroup label="' + esc(c.name) + '">' + list.map(function (x) {
+          return '<option value="' + esc(x.id) + '"' + (x.id === m.object_id ? ' selected' : '') + '>' + esc(x.name) + (x.reg_number ? ' · ' + esc(plate(x.reg_number)) : '') + '</option>';
+        }).join('') + '</optgroup>' : '';
+      }).join('') + '</select>';
+    h += '<label class="f">Вид срок</label><select data-f="type_id" data-re="1"' + (locked ? ' disabled' : '') + '>' + types.map(function (x) {
+      return '<option value="' + esc(x.id) + '"' + (x.id === m.type_id ? ' selected' : '') + '>' + esc(x.name) + '</option>';
+    }).join('') + '</select>';
+    if (!t) h += '<div class="err">За тази категория няма активни видове срокове. Добави вид от „Настройки“.</div>';
+    if (t && yes(t.track_date)) {
+      h += '<div class="two"><div><label class="f">Валиден от</label><input type="date" data-f="valid_from" value="' + esc(m.valid_from) + '"></div>' +
+        '<div><label class="f">Валиден до</label><input type="date" data-f="valid_to" value="' + esc(m.valid_to) + '"></div></div>';
+    }
+    if (t && yes(t.track_km)) {
+      var odo = o && o.odometer;
+      h += '<label class="f">Праг в километри (показание на километража)</label><input type="text" inputmode="numeric" data-f="km_limit" value="' + esc(m.km_limit) + '">' +
+        '<div class="hint">' + (odo && odo.km !== null ? 'Сега: ' + (odo.estimated ? 'около ' : '') + num(odo.km) + ' км. ' : '') +
+        (yes(t.track_date) ? 'Важи което настъпи първо: датата или километрите.' : '') + '</div>';
+    }
+    h += '<label class="f">Описание (по избор)</label><input type="text" data-f="note" maxlength="120" value="' + esc(m.note) + '">';
+    h += '<label class="f">Получатели на напомнянето</label><div class="chips wrap">' + S.people.filter(function (x) { return yes(x.active); }).map(function (x) {
+      var on = m.recipients.indexOf(x.id) >= 0;
+      return '<button class="chip' + (on ? ' on' : '') + '" data-act="rec" data-id="' + esc(x.id) + '">' + (on ? '✓ ' : '') + esc(x.name) + '</button>';
+    }).join('') + '</div>';
+    if (t && yes(t.track_date)) {
+      h += '<label class="f">Собствени дни за напомняне (по избор)</label><input type="text" inputmode="numeric" data-f="remind_days" placeholder="по вида: ' +
+        esc(t.remind_days) + '" value="' + esc(m.remind_days) + '">';
+    }
+    h += formEnd(p, !t);
+    return { title: p.mode === 'new' ? 'Нов срок' : p.mode === 'renew' ? 'Подновяване' : 'Поправка на срок', html: h };
+  };
+
+  VIEWS.objects = function () {
+    var h = '';
+    S.categories.forEach(function (c) {
+      var list = S.objects.filter(function (o) { return o.category_id === c.id; });
+      if (!list.length) return;
+      h += '<div class="sec">' + esc(c.name) + '</div><div class="box">' + list.map(function (o) {
+        var sub, n = S.deadlines.filter(function (d) { return d.object_id === o.id && d.status === 'active'; }).length;
+        if (o.odometer) sub = plate(o.reg_number) + ' · ' + (o.odometer.km === null ? 'няма показание' : (o.odometer.estimated ? 'около ' : '') + num(o.odometer.km) + ' км');
+        else sub = n ? count(n, 'срок', 'срока') : 'няма срокове';
+        var pill = '';
+        if (!yes(o.active)) pill = '<span class="pill p-grey">изключен</span>';
+        else if (o.missing) pill = '<span class="pill p-grey">' + count(o.missing, 'липсва', 'липсват') + '</span>';
+        else if (o.mandatory.some(function (x) { return x.status === 'expired'; })) pill = '<span class="pill p-red">изтекъл</span>';
+        else if (o.mandatory.length) pill = '<span class="pill p-green">пълен</span>';
+        return '<button class="li' + (yes(o.active) ? '' : ' dim') + '" data-act="object" data-id="' + esc(o.id) + '"><div>' + esc(o.name) + '<small>' + esc(sub) +
+          '</small></div>' + pill + '<span class="go">›</span></button>';
+      }).join('') + '</div>';
+    });
+    if (!h) h = '<div class="empty">Още няма обекти. Добави първия с „+ Нов обект“.</div>';
+    return { title: 'Обекти', action: ['+ Нов обект', 'new-object'], html: h };
+  };
+
+  VIEWS.object = function (p) {
+    var o = byId(S.objects, p.id), h = '';
+    var label = { valid: ['green', 'валиден'], soon: ['amber', 'изтича скоро'], expired: ['red', 'изтекъл'], missing: ['grey', 'липсва'] };
+    if (o.reg_number || o.note) h += '<div class="hint" style="margin:0 2px 10px">' + esc([plate(o.reg_number), o.note].filter(String).join(' · ')) + '</div>';
+    if (o.mandatory.length) {
+      h += '<div class="sec">Задължителни срокове</div><div class="box">' + o.mandatory.map(function (x) {
+        var l = label[x.status];
+        var sub = x.status === 'missing' ? 'няма въведен срок' : (x.valid_to ? 'до ' + fmtDate(x.valid_to) : '');
+        var pill = '<span class="pill p-' + l[0] + '">' + l[1] + '</span>';
+        return x.deadline_id
+          ? '<button class="li" data-act="deadline" data-id="' + esc(x.deadline_id) + '"><div>' + esc(x.type_name) + '<small>' + sub + '</small></div>' + pill + '<span class="go">›</span></button>'
+          : '<div class="li"><div>' + esc(x.type_name) + '<small>' + sub + '</small></div>' + pill +
+            (yes(o.active) ? '<button class="btn small" data-act="new-deadline" data-type="' + esc(x.type_id) + '">Въведи</button>' : '') + '</div>';
+      }).join('') + '</div>';
+    }
+    if (o.odometer) {
+      var k = o.odometer;
+      h += '<div class="sec">Километраж</div>';
+      h += k.km === null ? '<div class="box"><div class="kv"><span>Няма въведено показание</span><span></span></div></div>'
+        : '<div class="box">' + kv(k.estimated ? 'Сега (оценка)' : 'Сега', '<b>' + (k.estimated ? 'около ' : '') + num(k.km) + ' км</b>') +
+          kv('Последно показание', num(k.last_km) + ' км на ' + fmtDate(k.last_date)) +
+          (k.per_day !== null ? kv('Среден пробег', String(k.per_day).replace('.', ',') + ' км на ден') : '') + '</div>';
+      h += '<div class="btns">' + (yes(o.active) ? '<button class="btn" style="margin-top:0" data-act="new-odo">Ново показание</button>' : '') +
+        (k.readings ? '<button class="btn ghost" style="margin-top:0" data-act="odo">Всички показания</button>' : '') + '</div>';
+    }
+    var shown = o.mandatory.map(function (x) { return x.deadline_id; });
+    var mine = S.deadlines.filter(function (d) { return d.object_id === o.id; });
+    var others = sortActive(mine.filter(function (d) { return d.status === 'active' && shown.indexOf(d.id) < 0; }));
+    h += '<div class="sec">' + (o.mandatory.length ? 'Други срокове' : 'Срокове') + '</div>' +
+      (others.map(function (d) { return card(d, false); }).join('') || '<div class="hint" style="margin-bottom:8px">Няма.</div>');
+    if (yes(o.active)) h += '<button class="btn ghost" data-act="new-deadline">+ Нов срок за ' + esc(o.name) + '</button>';
+    var past = mine.filter(function (d) { return d.status !== 'active'; }).sort(function (a, b) { return String(b.closed_at).localeCompare(String(a.closed_at)); });
+    if (past.length) h += '<div class="sec">Минали срокове</div>' + past.slice(0, 20).map(function (d) { return card(d, false); }).join('');
+    return { title: o.name, action: ['Поправи', 'edit-object'], html: h };
+  };
+
+  VIEWS.oform = function (p) {
+    var m = p.m, c = byId(S.categories, m.category_id);
+    var h = '<label class="f">Категория</label><select data-f="category_id" data-re="1"' + (m.id ? ' disabled' : '') + '>' +
+      S.categories.filter(function (x) { return yes(x.active) || x.id === m.category_id; }).map(function (x) {
+        return '<option value="' + esc(x.id) + '"' + (x.id === m.category_id ? ' selected' : '') + '>' + esc(x.name) + '</option>';
+      }).join('') + '</select>' +
+      '<label class="f">Име</label><input type="text" data-f="name" maxlength="60" value="' + esc(m.name) + '">';
+    if (c && yes(c.vehicle)) h += '<label class="f">Регистрационен номер</label><input type="text" data-f="reg_number" maxlength="12" autocapitalize="characters" value="' + esc(m.reg_number) + '">';
+    h += '<label class="f">Бележка (по избор)</label><input type="text" data-f="note" maxlength="120" value="' + esc(m.note) + '">';
+    if (m.id) h += '<div style="margin-top:8px">' + sw('active', 'Активен', m.active) + '</div><div class="hint">Изключен обект остава в списъка, но за него не се въвеждат нови срокове.</div>';
+    return { title: m.id ? 'Поправка на обект' : 'Нов обект', html: h + formEnd(p) };
+  };
+
+  VIEWS.odo = function (p) {
+    var o = byId(S.objects, p.id), src = { manual: 'ръчно', document: 'от документ', service: 'при обслужване' };
+    var rows = S.odometer.filter(function (r) { return r.object_id === o.id; }).sort(function (a, b) { return String(b.date).localeCompare(String(a.date)) || b.km - a.km; });
+    var h = '<div class="hint" style="margin:0 2px 8px">Докосни показание, за да го поправиш.</div><div class="box">' + rows.map(function (r) {
+      return '<button class="li" data-act="edit-odo" data-id="' + esc(r.id) + '"><div>' + num(r.km) + ' км<small>' + fmtDate(r.date) + ' · ' + (src[r.source] || esc(r.source)) +
+        ' · ' + esc(person(r.created_by)) + '</small></div><span class="go">›</span></button>';
+    }).join('') + '</div>';
+    return { title: 'Показания: ' + o.name, action: yes(o.active) ? ['+ Ново', 'new-odo'] : null, html: h };
+  };
+
+  VIEWS.odoform = function (p) {
+    var m = p.m, o = byId(S.objects, m.object_id), k = o.odometer || {};
+    var h = '<div class="hint" style="margin:0 2px 4px">' + esc(o.name) + (k.last_km !== null && k.last_km !== undefined ? ' · последно ' + num(k.last_km) + ' км на ' + fmtDate(k.last_date) : '') + '</div>' +
+      '<div class="two"><div><label class="f">Дата</label><input type="date" data-f="date" max="' + esc(S.today) + '" value="' + esc(m.date) + '"></div>' +
+      '<div><label class="f">Километри</label><input type="text" inputmode="numeric" data-f="km" value="' + esc(m.km) + '"></div></div>' +
+      '<label class="f">Източник</label><div class="chips wrap">' + [['manual', 'Ръчно'], ['document', 'Документ'], ['service', 'Обслужване']].map(function (s) {
+        return '<button class="chip' + (m.source === s[0] ? ' on' : '') + '" data-act="src" data-id="' + s[0] + '">' + s[1] + '</button>';
+      }).join('') + '</div>';
+    return { title: m.id ? 'Поправка на показание' : 'Ново показание', html: h + formEnd(p) };
+  };
+
+  VIEWS.settings = function () {
+    if (!byId(S.categories, F.cat)) F.cat = S.categories.length ? S.categories[0].id : '';
+    var c = byId(S.categories, F.cat);
+    var h = '<div class="sec">Категории<button data-act="new-cat">+ Нова</button></div><div class="chips">' + S.categories.map(function (x) {
+      return '<button class="chip' + (x.id === F.cat ? ' on' : '') + (yes(x.active) ? '' : ' off') + '" data-act="cat" data-id="' + esc(x.id) + '">' + esc(x.name) + '</button>';
+    }).join('') + '</div>';
+    if (c) {
+      h += '<div class="hint" style="margin:-4px 2px 0">' + (yes(c.vehicle) ? 'С регистрационен номер и километраж' : 'Без километраж') + (yes(c.active) ? '' : ' · изключена') +
+        ' · <button class="link" data-act="edit-cat">Поправи категорията</button></div>';
+      var types = S.types.filter(function (t) { return t.category_id === c.id; });
+      h += '<div class="sec">Видове срокове: ' + esc(c.name) + (yes(c.active) ? '<button data-act="new-type">+ Нов вид</button>' : '') + '</div><div class="box">' +
+        (types.map(function (t) {
+          var sub = [];
+          if (!yes(t.active)) sub.push('изключен');
+          if (yes(t.mandatory)) sub.push('задължителен');
+          if (yes(t.track_date)) sub.push(esc(t.remind_days) + ' дни');
+          if (yes(t.track_km)) sub.push(num(t.km_before || 0) + ' км преди прага');
+          return '<button class="li' + (yes(t.active) ? '' : ' dim') + '" data-act="edit-type" data-id="' + esc(t.id) + '"><div>' + esc(t.name) + '<small>' + sub.join(' · ') +
+            '</small></div><span class="go">›</span></button>';
+        }).join('') || '<div class="li"><div style="color:var(--muted)">Няма видове в тази категория.</div></div>') + '</div>';
+    }
+    h += '<div class="sec">Общи<button data-act="edit-general">Поправи</button></div><div class="box">' +
+      kv('Повторение след изтичане', 'на ' + days(Number(S.settings.repeat_after_expiry_days))) +
+      kv('Подкана за километраж', 'след ' + days(Number(S.settings.odometer_prompt_days))) +
+      kv('Среден пробег по последните', days(Number(S.settings.avg_km_window_days))) + '</div>' +
+      '<div class="hint">Влязъл: ' + esc(S.user.name || S.user.email) + ' · <button class="link" data-act="logout">Изход</button> · <button class="link" data-act="reload">Обнови данните</button></div>';
+    return { title: 'Настройки', html: h };
+  };
+
+  VIEWS.cform = function (p) {
+    var m = p.m;
+    var h = '<label class="f">Име</label><input type="text" data-f="name" maxlength="40" value="' + esc(m.name) + '"><div style="margin-top:8px">' +
+      sw('vehicle', 'С регистрационен номер и километраж', m.vehicle) + (m.id ? sw('active', 'Активна', m.active) : '') + '</div>' +
+      '<div class="hint">Категория не се трие. Изключена категория остава в настройките, но в нея не се добавят обекти и видове.</div>';
+    return { title: m.id ? 'Поправка на категория' : 'Нова категория', html: h + formEnd(p) };
+  };
+
+  VIEWS.tform = function (p) {
+    var m = p.m, c = byId(S.categories, m.category_id), veh = c && yes(c.vehicle);
+    if (!veh) m.track_km = false;
+    var h = '<label class="f">Категория</label><select data-f="category_id" data-re="1"' + (m.id ? ' disabled' : '') + '>' +
+      S.categories.filter(function (x) { return yes(x.active) || x.id === m.category_id; }).map(function (x) {
+        return '<option value="' + esc(x.id) + '"' + (x.id === m.category_id ? ' selected' : '') + '>' + esc(x.name) + '</option>';
+      }).join('') + '</select>' +
+      '<label class="f">Име</label><input type="text" data-f="name" maxlength="60" value="' + esc(m.name) + '"><div style="margin-top:8px">' +
+      sw('mandatory', 'Задължителен за категорията', m.mandatory) + sw('track_date', 'Следи се по дата', m.track_date) +
+      sw('track_km', 'Следи се по километри', m.track_km, !veh) + (m.id ? sw('active', 'Активен', m.active) : '') + '</div>' +
+      '<label class="f">Дни за напомняне преди датата</label><input type="text" data-f="remind_days" placeholder="напр. 30, 7, 1" value="' + esc(m.track_date ? m.remind_days : '') + '"' + (m.track_date ? '' : ' disabled') + '>' +
+      '<div class="hint">Числа, разделени със запетая. Най-голямото определя кога срокът става „изтича скоро“.</div>' +
+      '<label class="f">Километри преди прага</label><input type="text" inputmode="numeric" data-f="km_before" value="' + esc(m.track_km ? m.km_before : '') + '"' +
+      (m.track_km ? ' placeholder="напр. 1000"' : ' disabled placeholder="не се следи по километри"') + '>';
+    return { title: m.id ? 'Поправка на вид срок' : 'Нов вид срок', html: h + formEnd(p) };
+  };
+
+  VIEWS.gform = function (p) {
+    var m = p.m;
+    var row = function (key, label, unit) {
+      return '<label class="f">' + label + ' (' + unit + ')</label><input type="text" inputmode="numeric" data-f="' + key + '" value="' + esc(m[key]) + '">';
+    };
+    var h = row('repeat_after_expiry_days', 'Повторение на напомнянето след изтичане', 'на колко дни') +
+      row('odometer_prompt_days', 'Подкана за показание на километража', 'след колко дни без показание') +
+      row('avg_km_window_days', 'Среден пробег по показанията от последните', 'дни');
+    return { title: 'Общи настройки', html: h + formEnd(p) };
+  };
+
+  function sw(field, label, on, disabled) {
+    return '<label class="sw' + (disabled ? ' dis' : '') + '"><span>' + label + '</span><input type="checkbox" data-f="' + field + '" data-re="1"' +
+      (on ? ' checked' : '') + (disabled ? ' disabled' : '') + '></label>';
+  }
+  function formEnd(p, disabled) {
+    return (p.error ? '<div class="err">' + esc(p.error) + '</div>' : '') +
+      '<button class="btn" style="margin-top:16px" data-act="save"' + (busy || disabled ? ' disabled' : '') + '>' + (busy ? 'Записва се...' : 'Запази') + '</button>';
+  }
+
+  // ---------- drawing ----------
+  function isForm(v) { return /form$/.test(v.v); }
+  function pane(view, withBack) {
+    var r = VIEWS[view.v](view);
+    return '<div class="bar">' + (withBack ? '<button class="back" data-act="back" aria-label="Назад">‹</button>' : '') + '<span class="ttl">' + esc(r.title) + '</span>' +
+      (r.action ? '<button class="act' + (r.action[2] ? ' ' + r.action[2] : '') + '" data-act="' + r.action[1] + '">' + r.action[0] + '</button>' : '') + '</div><div class="body">' + r.html + '</div>';
+  }
+  function render() {
+    if (!S) return;
+    // a screen whose record is gone (for example after a reload of the data) falls back to its tab
+    stack = stack.filter(function (v, i) {
+      if (i === 0) return true;
+      if (v.v === 'deadline') return !!byId(S.deadlines, v.id);
+      if (v.v === 'object' || v.v === 'odo') return !!byId(S.objects, v.id);
+      return true;
+    });
+    var keep = {};
+    ['main', 'panel'].forEach(function (id) { var b = $(id).querySelector('.body'); keep[id] = b ? b.scrollTop : 0; });
+    var sameMain = $('main').getAttribute('data-v') === stack[0].v, key = stack.length + ':' + top().v + ':' + (top().id || '');
+    var samePanel = $('panel').getAttribute('data-v') === key;
+    $('app').className = (stack.length > 1 ? 'has-panel' : '') + (isForm(top()) ? ' in-form' : '');
+    $('main').innerHTML = pane(stack[0], false); $('main').setAttribute('data-v', stack[0].v);
+    $('panel').innerHTML = stack.length > 1 ? pane(top(), true) : ''; $('panel').setAttribute('data-v', key);
+    if (sameMain) $('main').querySelector('.body').scrollTop = keep.main;
+    if (samePanel && stack.length > 1) $('panel').querySelector('.body').scrollTop = keep.panel;
+    Array.prototype.forEach.call(document.querySelectorAll('#tabs button'), function (b) {
+      b.className = b.getAttribute('data-tab') === stack[0].v ? 'on' : '';
+    });
+    $('who').textContent = S.user.name || S.user.email;
+  }
+
+  // ---------- forms: what is sent ----------
+  function deadlineModel(d, mode) {
+    var renew = mode === 'renew';
+    return {
+      id: d.id || '', object_id: d.object_id || '', type_id: d.type_id || '',
+      valid_from: renew ? '' : (d.valid_from || ''), valid_to: renew ? '' : (d.valid_to || ''),
+      km_limit: renew || !has(d.km_limit) ? '' : String(d.km_limit), note: d.note || '',
+      recipients: d.recipients ? String(d.recipients).split(/[,\s]+/).filter(String)
+        : S.people.filter(function (x) { return yes(x.active); }).map(function (x) { return x.id; }),
+      remind_days: d.remind_days ? String(d.remind_days) : ''
+    };
+  }
+  function digits(v) { return String(v).replace(/[\s.,]/g, ''); }
+  var SAVE = {
+    dform: function (p) {
+      var m = p.m, t = byId(S.types, m.type_id) || {};
+      var data = { valid_from: yes(t.track_date) ? m.valid_from : '', valid_to: yes(t.track_date) ? m.valid_to : '',
+        km_limit: yes(t.track_km) ? digits(m.km_limit) : '', note: m.note, recipients: m.recipients.join(', '),
+        remind_days: yes(t.track_date) ? m.remind_days : '' };
+      if (p.mode === 'new') { data.object_id = m.object_id; data.type_id = m.type_id; return ['createDeadline', data, 1, 'Срокът е записан.']; }
+      data.id = m.id;
+      return p.mode === 'renew' ? ['renewDeadline', data, 2, 'Срокът е подновен.'] : ['updateDeadline', data, 1, 'Поправката е записана.'];
+    },
+    oform: function (p) {
+      var m = p.m, data = { category_id: m.category_id, name: m.name, reg_number: m.reg_number, note: m.note };
+      if (m.id) { data.id = m.id; data.active = m.active ? 'yes' : 'no'; }
+      return ['saveObject', data, 1, 'Обектът е записан.'];
+    },
+    odoform: function (p) {
+      var m = p.m, data = { date: m.date, km: digits(m.km), source: m.source };
+      if (m.id) { data.id = m.id; return ['updateOdometer', data, 1, 'Показанието е поправено.']; }
+      data.object_id = m.object_id;
+      return ['addOdometer', data, 1, 'Показанието е записано.'];
+    },
+    cform: function (p) {
+      var m = p.m, data = { name: m.name, vehicle: m.vehicle ? 'yes' : 'no' };
+      if (m.id) { data.id = m.id; data.active = m.active ? 'yes' : 'no'; }
+      return ['saveCategory', data, 1, 'Категорията е записана.'];
+    },
+    tform: function (p) {
+      var m = p.m, data = { name: m.name, mandatory: m.mandatory ? 'yes' : 'no', track_date: m.track_date ? 'yes' : 'no',
+        track_km: m.track_km ? 'yes' : 'no', remind_days: m.remind_days, km_before: digits(m.km_before) };
+      if (m.id) { data.id = m.id; data.active = m.active ? 'yes' : 'no'; } else data.category_id = m.category_id;
+      return ['saveType', data, 1, 'Видът срок е записан.'];
+    },
+    gform: function (p) {
+      var data = {};
+      Object.keys(p.m).forEach(function (k) { data[k] = digits(p.m[k]); });
+      return ['saveSettings', data, 1, 'Настройките са записани.'];
+    }
+  };
+  function save() {
+    var p = top();
+    if (busy || !SAVE[p.v]) return;
+    var job = SAVE[p.v](p);
+    busy = true; p.error = ''; render();
+    call(job[0], job[1]).then(function (res) {
+      busy = false;
+      if (p.v === 'cform' && res.id) F.cat = res.id;
+      toast(job[3]);
+      if (top() === p) back(job[2]); else render();
+    }, function (err) { busy = false; p.error = err.message; render(); });
+  }
+
+  // ---------- actions ----------
+  var ACT = {
+    back: function () { back(1); },
+    reload: function () { if (S) toast('Обновяване...'); call('state').then(render, function (e) { toast(e.message); }); if (!S) start(); },
+    filter: function (el) { F.object = el.getAttribute('data-id'); render(); },
+    history: function () { F.history = !F.history; render(); },
+    deadline: function (el) {
+      var view = { v: 'deadline', id: el.getAttribute('data-id') };
+      // on the list a tap on another row replaces the open deadline instead of stacking them
+      if (top().v === 'deadline' && stack.length === 2) { stack[1] = view; render(); } else go(view);
+    },
+    'new-deadline': function (el) {
+      var objectId = top().v === 'object' ? top().id : (F.object || (S.objects.filter(function (o) { return yes(o.active); })[0] || {}).id);
+      go({ v: 'dform', mode: 'new', m: deadlineModel({ object_id: objectId, type_id: el.getAttribute('data-type') || '' }, 'new') });
+    },
+    'edit-deadline': function () { go({ v: 'dform', mode: 'edit', m: deadlineModel(byId(S.deadlines, top().id), 'edit') }); },
+    renew: function () { go({ v: 'dform', mode: 'renew', m: deadlineModel(byId(S.deadlines, top().id), 'renew') }); },
+    'close-ask': function () { top().confirm = true; render(); },
+    'close-no': function () { top().confirm = false; render(); },
+    'close-yes': function () {
+      var p = top();
+      if (busy) return;
+      busy = true;
+      call('closeDeadline', { id: p.id }).then(function () { busy = false; p.confirm = false; toast('Срокът е закрит.'); render(); },
+        function (err) { busy = false; p.confirm = false; p.error = err.message; render(); });
+    },
+    rec: function (el) {
+      var list = top().m.recipients, id = el.getAttribute('data-id'), i = list.indexOf(id);
+      if (i >= 0) list.splice(i, 1); else list.push(id);
+      render();
+    },
+    object: function (el) { go({ v: 'object', id: el.getAttribute('data-id') }); },
+    'new-object': function () {
+      var c = S.categories.filter(function (x) { return yes(x.active); })[0];
+      go({ v: 'oform', m: { id: '', category_id: c ? c.id : '', name: '', reg_number: '', note: '', active: true } });
+    },
+    'edit-object': function () {
+      var o = byId(S.objects, top().id);
+      go({ v: 'oform', m: { id: o.id, category_id: o.category_id, name: o.name, reg_number: plate(o.reg_number), note: o.note || '', active: yes(o.active) } });
+    },
+    odo: function () { go({ v: 'odo', id: top().id }); },
+    'new-odo': function () { go({ v: 'odoform', m: { id: '', object_id: top().id, date: S.today, km: '', source: 'manual' } }); },
+    'edit-odo': function (el) {
+      var r = byId(S.odometer, el.getAttribute('data-id'));
+      go({ v: 'odoform', m: { id: r.id, object_id: r.object_id, date: r.date, km: String(r.km), source: r.source || 'manual' } });
+    },
+    src: function (el) { top().m.source = el.getAttribute('data-id'); render(); },
+    cat: function (el) { F.cat = el.getAttribute('data-id'); render(); },
+    'new-cat': function () { go({ v: 'cform', m: { id: '', name: '', vehicle: false, active: true } }); },
+    'edit-cat': function () {
+      var c = byId(S.categories, F.cat);
+      go({ v: 'cform', m: { id: c.id, name: c.name, vehicle: yes(c.vehicle), active: yes(c.active) } });
+    },
+    'new-type': function () {
+      go({ v: 'tform', m: { id: '', category_id: F.cat, name: '', mandatory: false, track_date: true, track_km: false, remind_days: '', km_before: '', active: true } });
+    },
+    'edit-type': function (el) {
+      var t = byId(S.types, el.getAttribute('data-id'));
+      go({ v: 'tform', m: { id: t.id, category_id: t.category_id, name: t.name, mandatory: yes(t.mandatory), track_date: yes(t.track_date),
+        track_km: yes(t.track_km), remind_days: String(t.remind_days || ''), km_before: has(t.km_before) ? String(t.km_before) : '', active: yes(t.active) } });
+    },
+    'edit-general': function () {
+      go({ v: 'gform', m: { repeat_after_expiry_days: S.settings.repeat_after_expiry_days, odometer_prompt_days: S.settings.odometer_prompt_days,
+        avg_km_window_days: S.settings.avg_km_window_days } });
+    },
+    save: save,
+    logout: function () {
+      if (window.google && google.accounts) google.accounts.id.disableAutoSelect();
+      idToken = ''; tokenExp = 0; S = null; stack = [{ v: 'list' }];
+      showLogin('');
+    }
+  };
+
+  document.addEventListener('click', function (e) {
+    var tab = e.target.closest('[data-tab]');
+    if (tab) return setTab(tab.getAttribute('data-tab'));
+    var el = e.target.closest('[data-act]');
+    if (el && ACT[el.getAttribute('data-act')]) ACT[el.getAttribute('data-act')](el);
+  });
+  // every field writes into the model of the open form; selects and switches redraw the form
+  function onField(e) {
+    var el = e.target, f = el.getAttribute && el.getAttribute('data-f'), p = top();
+    if (!f || !p.m) return;
+    p.m[f] = el.type === 'checkbox' ? el.checked : el.value;
+    if (e.type === 'change' && el.getAttribute('data-re')) render();
+  }
+  document.addEventListener('input', onField);
+  document.addEventListener('change', onField);
+  // fresh data when the page comes back to the front after a while
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden && S && !isForm(top()) && Date.now() - loadedAt > 5 * 60000) call('state').then(render, function () {});
+  });
+
+  // ---------- start ----------
+  history.replaceState({ d: 1 }, '');
+  if (cfg.dev) return start();
+  if (!cfg.s || !cfg.c) {
+    $('login-text').textContent = 'Отвори страницата от линка за първо отваряне (с частта след #).';
+    return;
+  }
+  window.addEventListener('load', function () {
+    if (!window.google || !google.accounts) return showLogin('Библиотеката на Google не се зареди. Провери връзката и презареди страницата.');
+    google.accounts.id.initialize({ client_id: cfg.c, callback: onCredential, auto_select: true });
+    google.accounts.id.renderButton($('gbtn'), { theme: 'outline', size: 'large', locale: 'bg' });
+    google.accounts.id.prompt();
+  });
+})();
+</script>
+</body>
+</html>
