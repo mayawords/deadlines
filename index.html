@@ -45,7 +45,7 @@
 
   /* pieces */
   .sum { display: flex; gap: 8px; margin-bottom: 10px; }
-  .sum div { flex: 1; border-radius: 10px; padding: 8px 6px; text-align: center; font-size: 12px; }
+  .sum > * { flex: 1; border-radius: 10px; padding: 8px 6px; text-align: center; font-size: 12px; }
   .sum b { display: block; font-size: 20px; line-height: 1.1; }
   .s-red { background: var(--red-soft); color: var(--red); } .s-amber { background: var(--amber-soft); color: var(--amber); } .s-grey { background: var(--grey-soft); color: #454c53; }
   .chips { display: flex; gap: 6px; margin-bottom: 10px; overflow-x: auto; scrollbar-width: none; }
@@ -156,6 +156,8 @@
   var stack = [{ v: 'list' }];          // stack[0] is the tab, the top is the open screen
   var F = { object: '', history: false, cat: '' };
   var loadedAt = 0, busy = false, toastTimer = 0;
+  var reloading = false;                // after a network error on a save: the data is being read again, Save is off
+  var TIMEOUT = 30000;                  // a request without an answer is cut after this many milliseconds
   var $ = function (id) { return document.getElementById(id); };
 
   // ---------- configuration ----------
@@ -239,9 +241,15 @@
       google.accounts.id.prompt();
     });
   }
+  // An error with net = true is not a refusal of the script: the request may or may not have reached it.
+  function netError(text) { var e = new Error(text); e.net = true; return e; }
   function post(fn, data) {
+    var ctrl = window.AbortController ? new AbortController() : null, late = false;
+    var timer = setTimeout(function () { late = true; if (ctrl) ctrl.abort(); }, TIMEOUT);
+    // a read ('state') writes nothing, so its message does not speak of a record
+    var silent = function () { return netError('Сървърът не отговори.' + (fn === 'state' ? '' : ' Провери дали записът е минал, преди да опиташ пак.')); };
     return fetch(cfg.url, {
-      method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, signal: ctrl ? ctrl.signal : undefined,
       body: JSON.stringify({ fn: fn, idToken: cfg.dev ? cfg.token : idToken, data: data || {} })
     }).then(function (r) {
       // an error page, a cut answer or anything else that is not the answer of the script:
@@ -251,8 +259,9 @@
         if (j.ok ? (j.result === undefined || j.result === null) : (typeof j.error !== 'string' || !j.error)) throw new Error();
         return j;
       })
-        .catch(function () { throw new Error('Сървърът върна неочакван отговор. Опитай пак след малко.'); });
-    }, function () { throw new Error('Няма връзка със сървъра.'); });
+        .catch(function () { throw late ? silent() : netError('Сървърът върна неочакван отговор. Опитай пак след малко.'); });
+    }, function () { throw late ? silent() : netError('Няма връзка със сървъра.'); })
+      .then(function (j) { clearTimeout(timer); return j; }, function (err) { clearTimeout(timer); throw err; });
   }
   // seq counts the requests sent and answered: the answer of a 'state' request is dropped when another request
   // was sent or answered after it, so that a late reload does not put an older state over a newer one
@@ -307,7 +316,7 @@
     var km = s.km_left === null ? '' : (s.km_estimated ? 'около ' : '') + num(Math.abs(s.km_left)) + ' км';
     var left = s.km_left === 1 ? 'остава' : 'остават';
     if (s.state === 'expired') {
-      return s.by === 'km' ? { c: 'red', a: 'прагът е минат', b: s.km_left === 0 ? 'сега' : 'с ' + km }
+      return s.by === 'km' ? { c: 'red', a: 'прагът е достигнат', b: s.km_left === 0 ? 'сега' : 'преди ' + km }
         : { c: 'red', a: 'изтекъл', b: 'преди ' + days(-s.days_left) };
     }
     if (s.state === 'soon') {
@@ -354,7 +363,7 @@
     if (F.object && !byId(objects, F.object)) F.object = '';   // the filtered object was switched off
     var h = '<div class="sum"><div class="s-red"><b>' + n('expired') + '</b>' + (n('expired') === 1 ? 'изтекъл' : 'изтекли') +
       '</div><div class="s-amber"><b>' + n('soon') + '</b>' + (n('soon') === 1 ? 'изтича скоро' : 'изтичат скоро') +
-      '</div><div class="s-grey"><b>' + S.missing_total + '</b>' + (S.missing_total === 1 ? 'липсва' : 'липсват') + '</div></div>';
+      '</div><button class="s-grey" data-tab="objects"><b>' + S.missing_total + '</b>' + (S.missing_total === 1 ? 'липсва' : 'липсват') + '</button></div>';
     h += '<div class="chips"><button class="chip' + (F.object ? '' : ' on') + '" data-act="filter" data-id="">Всички</button>' +
       objects.map(function (o) {
         return '<button class="chip' + (F.object === o.id ? ' on' : '') + '" data-act="filter" data-id="' + esc(o.id) + '">' + esc(o.name) + '</button>';
@@ -391,7 +400,7 @@
       '</div>';
     if (d.status === 'active') {
       h += p.confirm
-        ? '<div class="err">Срокът ще бъде закрит и напомнянията за него ще спрат. Ако има нов документ, избери „Поднови“.</div>' +
+        ? '<div class="err">Срокът ще бъде закрит и напомнянията за него ще спрат. Закрит срок не може да се върне. Ако има нов документ, избери „Поднови“.</div>' +
           '<div class="btns"><button class="btn ghost" data-act="close-no"' + (busy ? ' disabled' : '') + '>Отказ</button><button class="btn danger" data-act="close-yes"' +
           (busy ? ' disabled' : '') + '>' + (busy ? 'Закрива се...' : 'Закрий срока') + '</button></div>'
         : '<button class="btn" data-act="renew">Поднови</button><div class="btns"><button class="btn ghost" data-act="edit-deadline">Поправи</button>' +
@@ -512,7 +521,7 @@
       '<label class="f">Име</label><input type="text" data-f="name" maxlength="60" value="' + esc(m.name) + '">';
     if (c && yes(c.vehicle)) h += '<label class="f">Регистрационен номер</label><input type="text" data-f="reg_number" maxlength="12" autocapitalize="characters" value="' + esc(m.reg_number) + '">';
     h += '<label class="f">Бележка (по избор)</label><input type="text" data-f="note" maxlength="120" value="' + esc(m.note) + '">';
-    if (m.id) h += '<div style="margin-top:8px">' + sw('active', 'Активен', m.active) + '</div><div class="hint">Изключен обект остава в списъка, но за него не се въвеждат нови срокове.</div>';
+    if (m.id) h += '<div style="margin-top:8px">' + sw('active', 'Активен', m.active) + '</div><div class="hint">Изключен обект остава в списъка, но за него не се въвеждат нови срокове. Обект с активни срокове не може да се изключи.</div>';
     return { title: m.id ? 'Поправка на обект' : 'Нов обект', html: h + formEnd(p) };
   };
 
@@ -562,7 +571,7 @@
       kv('Повторение след изтичане', 'на ' + days(Number(S.settings.repeat_after_expiry_days))) +
       kv('Подкана за километраж', 'след ' + days(Number(S.settings.odometer_prompt_days))) +
       kv('Среден пробег по последните', days(Number(S.settings.avg_km_window_days))) + '</div>' +
-      '<div class="hint">Влязъл: ' + esc(S.user.name || S.user.email) + ' · <button class="link" data-act="logout">Изход</button> · <button class="link" data-act="reload">Обнови данните</button></div>';
+      '<div class="hint">Профил: ' + esc(S.user.name || S.user.email) + ' · <button class="link" data-act="logout">Изход</button> · <button class="link" data-act="reload">Обнови данните</button></div>';
     return { title: 'Настройки', html: h };
   };
 
@@ -614,7 +623,7 @@
         '<div class="btns"><button class="btn ghost" data-act="km-fix">Поправи прага</button><button class="btn" data-act="km-save">Запиши въпреки това</button></div>';
     }
     return (p.error ? '<div class="err" role="alert">' + esc(p.error) + '</div>' : '') +
-      '<button class="btn" style="margin-top:16px" data-act="save"' + (busy || disabled ? ' disabled' : '') + '>' + (busy ? 'Записва се...' : 'Запази') + '</button>';
+      '<button class="btn" style="margin-top:16px" data-act="save"' + (busy || reloading || disabled ? ' disabled' : '') + '>' + (busy ? 'Записва се...' : 'Запази') + '</button>';
   }
 
   // ---------- drawing ----------
@@ -747,7 +756,7 @@
   }
   function save(el, anyway) {
     var p = top();
-    if (busy || !SAVE[p.v]) return;
+    if (busy || reloading || !SAVE[p.v]) return;
     p.ask = anyway ? 0 : underOdometer(p);
     if (p.ask) { p.error = ''; render(); return $('panel').querySelector('[data-act="km-fix"]').focus(); }
     var job = SAVE[p.v](p);
@@ -757,13 +766,23 @@
       busy = false;
       if (p.v === 'cform' && res.id) F.cat = res.id;
       toast(job[3]);
-      if (top() === p) back(job[2]); else render();
-    }, function (err) { busy = false; p.error = err.message; render(); refresh(); });
+      // a new object: its screen takes the place of the form, so the deadlines can be entered at once
+      if (top() === p && p.v === 'oform' && !p.m.id && res.id) { stack[stack.length - 1] = { v: 'object', id: res.id }; render(); }
+      else if (top() === p) back(job[2]); else render();
+    }, function (err) { busy = false; reloading = !!err.net; p.error = err.message; render(); refresh(); });
   }
   // After a refused write the copy on the screen may be stale: the data is read again, the open screen and its error stay.
   // An open form is not drawn again (the user may be typing in it), only the list behind it.
+  // After a network error on a save the record may have gone through: Save stays off until this reload is over,
+  // so that the list behind the form shows whether it did before a second try.
   function refresh() {
-    if (!$('app').hidden) call('state').then(function () { render(isForm(top())); }, function () {});
+    var over = function () {
+      if (!reloading) return;
+      reloading = false;
+      if (!busy) Array.prototype.forEach.call($('panel').querySelectorAll('[data-act="save"]'), function (b) { b.disabled = false; });
+    };
+    if ($('app').hidden) return over();
+    call('state').then(function () { render(isForm(top())); over(); }, over);
   }
 
   // ---------- actions ----------
