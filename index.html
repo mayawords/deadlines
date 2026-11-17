@@ -55,6 +55,8 @@
   .chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
   .chip.off { color: #9aa1a7; border-style: dashed; }
   .card { width: 100%; background: var(--card); border-radius: 12px; padding: 10px 12px 10px 14px; margin-bottom: 8px; border-left: 5px solid var(--green); display: flex; gap: 10px; align-items: center; }
+  .card > div:first-child { min-width: 0; }
+  .card, .kv > span:last-child, .li > div, .hint, .btn, .sec, .err, .empty { overflow-wrap: anywhere; }
   .card.red { border-left-color: var(--red); } .card.amber { border-left-color: var(--amber); } .card.grey { border-left-color: #a9afb5; }
   .card.sel { outline: 2px solid var(--accent); }
   .card .t { font-weight: 600; } .card .o { font-size: 13px; color: var(--muted); }
@@ -64,6 +66,7 @@
   .sec { display: flex; justify-content: space-between; align-items: baseline; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 16px 2px 6px; font-weight: 600; }
   .sec:first-child { margin-top: 2px; }
   .sec button, .link { color: var(--accent); font-weight: 600; text-transform: none; letter-spacing: 0; font-size: 13px; }
+  .sec button { white-space: nowrap; flex: none; }
   .box { background: var(--card); border-radius: 12px; padding: 2px 12px; margin-bottom: 8px; }
   .kv { display: flex; justify-content: space-between; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
   .kv:last-child, .li:last-child { border-bottom: 0; }
@@ -132,15 +135,15 @@
 <div id="app" hidden>
   <nav id="tabs">
     <div class="logo">Срокове</div>
-    <button data-tab="list"><i>◷</i>Срокове</button>
-    <button data-tab="objects"><i>▤</i>Обекти</button>
-    <button data-tab="settings"><i>⚙</i>Настройки</button>
+    <button data-tab="list"><i aria-hidden="true">◷</i>Срокове</button>
+    <button data-tab="objects"><i aria-hidden="true">▤</i>Обекти</button>
+    <button data-tab="settings"><i aria-hidden="true">⚙</i>Настройки</button>
     <div class="who" id="who"></div>
   </nav>
   <section class="pane" id="main"></section>
   <section class="pane" id="panel"></section>
 </div>
-<div id="toast" hidden></div>
+<div id="toast" role="status" hidden></div>
 <script>
 // Deadline Tracker: the page. All data comes from the Apps Script web app; nothing personal is in this file.
 // The deployment id (s) and the OAuth client id (c) come after # in the link of the first opening and are
@@ -157,6 +160,7 @@
 
   // ---------- configuration ----------
   try { cfg = JSON.parse(localStorage.getItem(CFG_KEY) || '{}') || {}; } catch (e) {}
+  cfg = { s: cfg.s, c: cfg.c };   // only the two ids are taken from the storage
   (function () {
     var h = new URLSearchParams(location.hash.slice(1));
     var local = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
@@ -178,10 +182,22 @@
     });
   }
   function byId(list, id) { for (var i = 0; i < list.length; i++) if (String(list[i].id) === String(id)) return list[i]; return null; }
-  function yes(v) { return String(v).toLowerCase() === 'yes'; }
+  // the same values as isYes() of the script: the sheet may turn a cell into TRUE
+  function yes(v) {
+    if (v === true) return true;
+    var s = String(v === null || v === undefined ? '' : v).trim().toLowerCase();
+    return s === 'yes' || s === 'true' || s === 'да' || s === '1';
+  }
   function fmtDate(s) { var m = String(s || '').match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? m[3] + '.' + m[2] + '.' + m[1] : ''; }
-  function num(n) { return String(Math.round(Number(n))).replace(/\B(?=(\d{3})+(?!\d))/g, ' '); }
+  function num(n) { return String(Math.round(Number(n))).replace(/\B(?=(\d{3})+(?!\d))/g, '\u00a0'); }   // a non-breaking space
+  // a number with decimals: the whole part grouped as in num(), the decimal comma kept
+  function dec(n) { var p = String(n).split('.'); return num(p[0]) + (p[1] ? ',' + p[1] : ''); }
   function days(n) { return n === 1 ? '1 ден' : n + ' дни'; }
+  // a list of days as text: '30, 7, 1' -> '30, 7 и 1 ден', '14, 3' -> '14 и 3 дни'
+  function dayList(s) {
+    var a = String(s === null || s === undefined ? '' : s).split(/[,\s]+/).filter(String), last = a.pop() || '';
+    return esc((a.length ? a.join(', ') + ' и ' : '') + last) + (last === '1' ? ' ден' : ' дни');
+  }
   function count(n, one, many) { return n + ' ' + (n === 1 ? one : many); }
   function plate(s) { var m = String(s || '').match(/^([A-Z]{1,2})(\d{3,4})([A-Z]{1,2})$/); return m ? m[1] + ' ' + m[2] + ' ' + m[3] : String(s || ''); }
   function person(email) {
@@ -227,16 +243,33 @@
     return fetch(cfg.url, {
       method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body: JSON.stringify({ fn: fn, idToken: cfg.dev ? cfg.token : idToken, data: data || {} })
-    }).then(function (r) { return r.json(); }, function () { throw new Error('Няма връзка със сървъра.'); });
+    }).then(function (r) {
+      // an error page, a cut answer or anything else that is not the answer of the script:
+      // { ok: true, result: ... } or { ok: false, error: 'the refusal' }
+      return r.json().then(function (j) {
+        if (!j || typeof j !== 'object' || typeof j.ok !== 'boolean') throw new Error();
+        if (j.ok ? (j.result === undefined || j.result === null) : (typeof j.error !== 'string' || !j.error)) throw new Error();
+        return j;
+      })
+        .catch(function () { throw new Error('Сървърът върна неочакван отговор. Опитай пак след малко.'); });
+    }, function () { throw new Error('Няма връзка със сървъра.'); });
   }
+  // seq counts the requests sent and answered: the answer of a 'state' request is dropped when another request
+  // was sent or answered after it, so that a late reload does not put an older state over a newer one
+  var seq = 0;
   function call(fn, data) {
+    var mine = ++seq;
     var fresh = (cfg.dev || tokenExp - Date.now() > 60000) ? Promise.resolve() : newToken();
     return fresh.then(function () { return post(fn, data); }).then(function (j) {
-      var expired = !j.ok && (j.error === 'Няма вход.' || j.error === 'Невалиден или изтекъл вход.');
-      return (expired && !cfg.dev) ? newToken().then(function () { return post(fn, data); }) : j;
+      var expired = function (x) { return !x.ok && (x.error === 'Няма вход.' || x.error === 'Невалиден или изтекъл вход.'); };
+      return (expired(j) && !cfg.dev) ? newToken().then(function () { return post(fn, data); }).then(function (k) {
+        if (expired(k)) throw new Error('LOGIN');   // refused again after the one repeat: the sign-in screen
+        return k;
+      }) : j;
     }).then(function (j) {
+      if (fn !== 'state') seq++;
       if (!j.ok) throw new Error(j.error || 'Грешка.');
-      if (fn === 'state') S = j.result; else if (j.result && j.result.state) S = j.result.state;
+      if (fn === 'state') { if (mine === seq || !S) S = j.result; } else if (j.result && j.result.state) S = j.result.state;
       loadedAt = Date.now();
       return j.result;
     }).catch(function (err) {
@@ -272,16 +305,17 @@
     var s = d.state;
     if (!s) return { c: 'grey', a: d.status === 'replaced' ? 'заменен' : 'закрит', b: fmtDate(d.closed_at) };
     var km = s.km_left === null ? '' : (s.km_estimated ? 'около ' : '') + num(Math.abs(s.km_left)) + ' км';
+    var left = s.km_left === 1 ? 'остава' : 'остават';
     if (s.state === 'expired') {
       return s.by === 'km' ? { c: 'red', a: 'прагът е минат', b: s.km_left === 0 ? 'сега' : 'с ' + km }
         : { c: 'red', a: 'изтекъл', b: 'преди ' + days(-s.days_left) };
     }
     if (s.state === 'soon') {
-      return s.by === 'km' ? { c: 'amber', a: 'остават', b: km }
+      return s.by === 'km' ? { c: 'amber', a: left, b: km }
         : { c: 'amber', a: 'изтича', b: s.days_left === 0 ? 'днес' : 'след ' + days(s.days_left) };
     }
     if (s.days_left !== null) return { c: 'green', a: '', b: 'след ' + days(s.days_left) };
-    if (s.km_left !== null) return { c: 'green', a: 'остават', b: km };
+    if (s.km_left !== null) return { c: 'green', a: left, b: km };
     return { c: 'green', a: '', b: 'валиден' };
   }
   function prox(d) {
@@ -317,6 +351,7 @@
     var active = S.deadlines.filter(function (d) { return d.status === 'active'; });
     var n = function (st) { return active.filter(function (d) { return d.state.state === st; }).length; };
     var objects = S.objects.filter(function (o) { return yes(o.active); });
+    if (F.object && !byId(objects, F.object)) F.object = '';   // the filtered object was switched off
     var h = '<div class="sum"><div class="s-red"><b>' + n('expired') + '</b>' + (n('expired') === 1 ? 'изтекъл' : 'изтекли') +
       '</div><div class="s-amber"><b>' + n('soon') + '</b>' + (n('soon') === 1 ? 'изтича скоро' : 'изтичат скоро') +
       '</div><div class="s-grey"><b>' + S.missing_total + '</b>' + (S.missing_total === 1 ? 'липсва' : 'липсват') + '</div></div>';
@@ -347,7 +382,7 @@
       (d.valid_to ? kv('Валиден до', fmtDate(d.valid_to)) : '') +
       (has(d.km_limit) ? kv('Праг в километри', num(d.km_limit) + ' км') : '') +
       (d.note ? kv('Описание', esc(d.note)) : '') +
-      (yes(t.track_date) ? kv('Напомняне', esc(own || t.remind_days) + ' дни преди' + (own ? ' (собствени)' : ' (по вида)')) : '') +
+      (yes(t.track_date) ? kv('Напомняне', dayList(own || t.remind_days) + ' преди' + (own ? ' (собствени)' : ' (по вида)')) : '') +
       (yes(t.track_km) && has(d.km_limit) ? kv('По километри', num(t.km_before || 0) + ' км преди прага') : '') +
       kv('Получатели', esc(rec.join(', '))) +
       kv('Въведен от', esc(person(d.created_by)) + ', ' + fmtDate(d.created_at)) +
@@ -357,7 +392,8 @@
     if (d.status === 'active') {
       h += p.confirm
         ? '<div class="err">Срокът ще бъде закрит и напомнянията за него ще спрат. Ако има нов документ, избери „Поднови“.</div>' +
-          '<div class="btns"><button class="btn ghost" data-act="close-no">Отказ</button><button class="btn danger" data-act="close-yes">Закрий срока</button></div>'
+          '<div class="btns"><button class="btn ghost" data-act="close-no"' + (busy ? ' disabled' : '') + '>Отказ</button><button class="btn danger" data-act="close-yes"' +
+          (busy ? ' disabled' : '') + '>' + (busy ? 'Закрива се...' : 'Закрий срока') + '</button></div>'
         : '<button class="btn" data-act="renew">Поднови</button><div class="btns"><button class="btn ghost" data-act="edit-deadline">Поправи</button>' +
           '<button class="btn danger" data-act="close-ask">Закрий</button></div>' +
           '<div class="hint">„Поднови“ отваря нов запис за същия обект и вид; този остава в историята като заменен.</div>';
@@ -427,7 +463,7 @@
           '</small></div>' + pill + '<span class="go">›</span></button>';
       }).join('') + '</div>';
     });
-    if (!h) h = '<div class="empty">Още няма обекти. Добави първия с „+ Нов обект“.</div>';
+    if (!h) h = '<div class="empty">Още няма обекти. Добави първия с „+\u00a0Нов обект“.</div>';
     return { title: 'Обекти', action: ['+ Нов обект', 'new-object'], html: h };
   };
 
@@ -452,7 +488,7 @@
       h += k.km === null ? '<div class="box"><div class="kv"><span>Няма въведено показание</span><span></span></div></div>'
         : '<div class="box">' + kv(k.estimated ? 'Сега (оценка)' : 'Сега', '<b>' + (k.estimated ? 'около ' : '') + num(k.km) + ' км</b>') +
           kv('Последно показание', num(k.last_km) + ' км на ' + fmtDate(k.last_date)) +
-          (k.per_day !== null ? kv('Среден пробег', String(k.per_day).replace('.', ',') + ' км на ден') : '') + '</div>';
+          (k.per_day !== null ? kv('Среден пробег', dec(k.per_day) + ' км на ден') : '') + '</div>';
       h += '<div class="btns">' + (yes(o.active) ? '<button class="btn" style="margin-top:0" data-act="new-odo">Ново показание</button>' : '') +
         (k.readings ? '<button class="btn ghost" style="margin-top:0" data-act="odo">Всички показания</button>' : '') + '</div>';
     }
@@ -516,7 +552,7 @@
           var sub = [];
           if (!yes(t.active)) sub.push('изключен');
           if (yes(t.mandatory)) sub.push('задължителен');
-          if (yes(t.track_date)) sub.push(esc(t.remind_days) + ' дни');
+          if (yes(t.track_date)) sub.push(dayList(t.remind_days));
           if (yes(t.track_km)) sub.push(num(t.km_before || 0) + ' км преди прага');
           return '<button class="li' + (yes(t.active) ? '' : ' dim') + '" data-act="edit-type" data-id="' + esc(t.id) + '"><div>' + esc(t.name) + '<small>' + sub.join(' · ') +
             '</small></div><span class="go">›</span></button>';
@@ -571,7 +607,13 @@
       (on ? ' checked' : '') + (disabled ? ' disabled' : '') + '></label>';
   }
   function formEnd(p, disabled) {
-    return (p.error ? '<div class="err">' + esc(p.error) + '</div>' : '') +
+    // the question about a limit in kilometres under the present value takes the place of the Save button
+    if (p.ask) {
+      return '<div class="err" role="alert">Прагът е под ' + (p.est ? 'сегашната оценка (около ' : 'сегашното показание (') + num(p.ask) + ' км). Въвежда се показанието, при което срокът изтича, например ' +
+        num(Math.floor(p.ask / 10000) * 10000 + 10000) + ' км. Запис въпреки това?</div>' +
+        '<div class="btns"><button class="btn ghost" data-act="km-fix">Поправи прага</button><button class="btn" data-act="km-save">Запиши въпреки това</button></div>';
+    }
+    return (p.error ? '<div class="err" role="alert">' + esc(p.error) + '</div>' : '') +
       '<button class="btn" style="margin-top:16px" data-act="save"' + (busy || disabled ? ' disabled' : '') + '>' + (busy ? 'Записва се...' : 'Запази') + '</button>';
   }
 
@@ -582,7 +624,8 @@
     return '<div class="bar">' + (withBack ? '<button class="back" data-act="back" aria-label="Назад">‹</button>' : '') + '<span class="ttl">' + esc(r.title) + '</span>' +
       (r.action ? '<button class="act' + (r.action[2] ? ' ' + r.action[2] : '') + '" data-act="' + r.action[1] + '">' + r.action[0] + '</button>' : '') + '</div><div class="body">' + r.html + '</div>';
   }
-  function render() {
+  // behind: only what is under the open screen is drawn again, the panel stays untouched
+  function render(behind) {
     if (!S) return;
     // a screen whose record is gone (for example after a reload of the data) falls back to its tab
     stack = stack.filter(function (v, i) {
@@ -591,15 +634,35 @@
       if (v.v === 'object' || v.v === 'odo') return !!byId(S.objects, v.id);
       return true;
     });
+    // the element with the keyboard focus, to focus the same one after the redraw
+    var act = document.activeElement, focus = '';
+    ['main', 'panel'].forEach(function (id) {
+      if (!act || !act.getAttribute || !$(id).contains(act)) return;
+      if (act.getAttribute('data-f')) focus = '#' + id + ' [data-f="' + act.getAttribute('data-f') + '"]';
+      else if (act.getAttribute('data-act')) focus = '#' + id + ' [data-act="' + act.getAttribute('data-act') + '"]' +
+        (act.hasAttribute('data-id') ? '[data-id="' + CSS.escape(act.getAttribute('data-id')) + '"]' : '');
+    });
     var keep = {};
     ['main', 'panel'].forEach(function (id) { var b = $(id).querySelector('.body'); keep[id] = b ? b.scrollTop : 0; });
+    var chips = $('main').querySelector('.chips'), chipsLeft = chips ? chips.scrollLeft : 0;
     var sameMain = $('main').getAttribute('data-v') === stack[0].v, key = stack.length + ':' + top().v + ':' + (top().id || '');
     var samePanel = $('panel').getAttribute('data-v') === key;
     $('app').className = (stack.length > 1 ? 'has-panel' : '') + (isForm(top()) ? ' in-form' : '');
     $('main').innerHTML = pane(stack[0], false); $('main').setAttribute('data-v', stack[0].v);
-    $('panel').innerHTML = stack.length > 1 ? pane(top(), true) : ''; $('panel').setAttribute('data-v', key);
+    if (behind !== true) { $('panel').innerHTML = stack.length > 1 ? pane(top(), true) : ''; $('panel').setAttribute('data-v', key); }
+    // every form label is bound to the field that follows it
+    Array.prototype.forEach.call($('panel').querySelectorAll('label.f'), function (l) {
+      var el = l.nextElementSibling;
+      if (el && el.getAttribute('data-f')) { el.id = 'f-' + el.getAttribute('data-f'); l.htmlFor = el.id; }
+    });
+    // the row of chips stays where it was and the chosen chip is brought into view
+    chips = $('main').querySelector('.chips');
+    if (chips && sameMain) chips.scrollLeft = chipsLeft;
+    if (chips && chips.querySelector('.chip.on')) chips.querySelector('.chip.on').scrollIntoView({ inline: 'nearest', block: 'nearest' });
     if (sameMain) $('main').querySelector('.body').scrollTop = keep.main;
     if (samePanel && stack.length > 1) $('panel').querySelector('.body').scrollTop = keep.panel;
+    act = focus ? document.querySelector(focus) : null;
+    if (act) act.focus({ preventScroll: true });
     Array.prototype.forEach.call(document.querySelectorAll('#tabs button'), function (b) {
       b.className = b.getAttribute('data-tab') === stack[0].v ? 'on' : '';
     });
@@ -618,16 +681,31 @@
       remind_days: d.remind_days ? String(d.remind_days) : ''
     };
   }
-  function digits(v) { return String(v).replace(/[\s.,]/g, ''); }
+  // A whole number as typed: digits grouped by thousands ('150 000', '150.000', '150,000') lose their separators,
+  // spaces are always dropped. Anything else ('1500.5', '12,5') is sent as it is, so the script refuses it.
+  function digits(v) {
+    var s = String(v).trim();
+    return /^\d{1,3}([\s.,]\d{3})+$/.test(s) ? s.replace(/\D/g, '') : s.replace(/\s/g, '');
+  }
   var SAVE = {
     dform: function (p) {
-      var m = p.m, t = byId(S.types, m.type_id) || {};
-      var data = { valid_from: yes(t.track_date) ? m.valid_from : '', valid_to: yes(t.track_date) ? m.valid_to : '',
-        km_limit: yes(t.track_km) ? digits(m.km_limit) : '', note: m.note, recipients: m.recipients.join(', '),
-        remind_days: yes(t.track_date) ? m.remind_days : '' };
+      var t = byId(S.types, p.m.type_id) || {};
+      var fields = function (m) {
+        return { valid_from: yes(t.track_date) ? m.valid_from : '', valid_to: yes(t.track_date) ? m.valid_to : '',
+          km_limit: yes(t.track_km) ? digits(m.km_limit) : '', note: m.note, recipients: m.recipients.join(', '),
+          remind_days: yes(t.track_date) ? m.remind_days : '' };
+      };
+      var m = p.m, data = fields(m);
       if (p.mode === 'new') { data.object_id = m.object_id; data.type_id = m.type_id; return ['createDeadline', data, 1, 'Срокът е записан.']; }
-      data.id = m.id;
-      return p.mode === 'renew' ? ['renewDeadline', data, 2, 'Срокът е подновен.'] : ['updateDeadline', data, 1, 'Поправката е записана.'];
+      if (p.mode === 'renew') { data.id = m.id; return ['renewDeadline', data, 2, 'Срокът е подновен.']; }
+      // an edit sends only what was changed in the form, so that a save from an older copy does not put back
+      // what somebody else changed meanwhile; a cleared field is sent as empty
+      var was = fields(p.was), changed = { id: m.id }, n = 0;
+      var same = function (k) {
+        return k === 'recipients' ? m.recipients.slice().sort().join() === p.was.recipients.slice().sort().join() : data[k] === was[k];
+      };
+      Object.keys(data).forEach(function (k) { if (!same(k)) { changed[k] = data[k]; n++; } });
+      return n ? ['updateDeadline', changed, 1, 'Поправката е записана.'] : ['', changed, 1, 'Няма промени.'];
     },
     oform: function (p) {
       var m = p.m, data = { category_id: m.category_id, name: m.name, reg_number: m.reg_number, note: m.note };
@@ -657,17 +735,35 @@
       return ['saveSettings', data, 1, 'Настройките са записани.'];
     }
   };
-  function save() {
+  // The limit in kilometres is a reading of the odometer, not an interval. For a new deadline and for a renewal:
+  // the present value of the car (the one in the hint of the form) when the entered limit is under it, otherwise 0.
+  function underOdometer(p) {
+    if (p.v !== 'dform' || p.mode === 'edit') return 0;
+    var o = byId(S.objects, p.m.object_id), t = byId(S.types, p.m.type_id), odo = o && o.odometer, km = digits(p.m.km_limit);
+    if (!t || !yes(t.track_km) || !odo || odo.km === null || odo.km === undefined || !/^\d+$/.test(km)) return 0;
+    var now = Math.round(Number(odo.km));
+    p.est = !!odo.estimated;
+    return (Number(km) > 0 && Number(km) < now) ? now : 0;   // a limit of 0 is left to the refusal of the script
+  }
+  function save(el, anyway) {
     var p = top();
     if (busy || !SAVE[p.v]) return;
+    p.ask = anyway ? 0 : underOdometer(p);
+    if (p.ask) { p.error = ''; render(); return $('panel').querySelector('[data-act="km-fix"]').focus(); }
     var job = SAVE[p.v](p);
+    if (!job[0]) { toast(job[3]); return back(job[2]); }   // nothing to send
     busy = true; p.error = ''; render();
     call(job[0], job[1]).then(function (res) {
       busy = false;
       if (p.v === 'cform' && res.id) F.cat = res.id;
       toast(job[3]);
       if (top() === p) back(job[2]); else render();
-    }, function (err) { busy = false; p.error = err.message; render(); });
+    }, function (err) { busy = false; p.error = err.message; render(); refresh(); });
+  }
+  // After a refused write the copy on the screen may be stale: the data is read again, the open screen and its error stay.
+  // An open form is not drawn again (the user may be typing in it), only the list behind it.
+  function refresh() {
+    if (!$('app').hidden) call('state').then(function () { render(isForm(top())); }, function () {});
   }
 
   // ---------- actions ----------
@@ -685,16 +781,18 @@
       var objectId = top().v === 'object' ? top().id : (F.object || (S.objects.filter(function (o) { return yes(o.active); })[0] || {}).id);
       go({ v: 'dform', mode: 'new', m: deadlineModel({ object_id: objectId, type_id: el.getAttribute('data-type') || '' }, 'new') });
     },
-    'edit-deadline': function () { go({ v: 'dform', mode: 'edit', m: deadlineModel(byId(S.deadlines, top().id), 'edit') }); },
+    'edit-deadline': function () { var d = byId(S.deadlines, top().id);
+      go({ v: 'dform', mode: 'edit', m: deadlineModel(d, 'edit'), was: deadlineModel(d, 'edit') });   // was: the values the form was opened with
+    },
     renew: function () { go({ v: 'dform', mode: 'renew', m: deadlineModel(byId(S.deadlines, top().id), 'renew') }); },
     'close-ask': function () { top().confirm = true; render(); },
     'close-no': function () { top().confirm = false; render(); },
     'close-yes': function () {
       var p = top();
       if (busy) return;
-      busy = true;
+      busy = true; render();
       call('closeDeadline', { id: p.id }).then(function () { busy = false; p.confirm = false; toast('Срокът е закрит.'); render(); },
-        function (err) { busy = false; p.confirm = false; p.error = err.message; render(); });
+        function (err) { busy = false; p.confirm = false; p.error = err.message; render(); refresh(); });
     },
     rec: function (el) {
       var list = top().m.recipients, id = el.getAttribute('data-id'), i = list.indexOf(id);
@@ -736,6 +834,12 @@
         avg_km_window_days: S.settings.avg_km_window_days } });
     },
     save: save,
+    'km-fix': function () {
+      top().ask = 0; render();
+      var f = $('panel').querySelector('[data-f="km_limit"]');
+      if (f) { f.focus(); f.select(); }
+    },
+    'km-save': function () { save(null, true); },
     logout: function () {
       if (window.google && google.accounts) google.accounts.id.disableAutoSelect();
       idToken = ''; tokenExp = 0; S = null; stack = [{ v: 'list' }];
@@ -754,6 +858,13 @@
     var el = e.target, f = el.getAttribute && el.getAttribute('data-f'), p = top();
     if (!f || !p.m) return;
     p.m[f] = el.type === 'checkbox' ? el.checked : el.value;
+    // a change of the limit, the object or the type takes the question about the limit away
+    if (p.ask && (f === 'km_limit' || f === 'object_id' || f === 'type_id')) {
+      var at = f === 'km_limit' ? el.selectionStart : null;
+      p.ask = 0; render();
+      if (at !== null && document.activeElement && document.activeElement.getAttribute('data-f') === f) document.activeElement.setSelectionRange(at, at);
+      return;
+    }
     if (e.type === 'change' && el.getAttribute('data-re')) render();
   }
   document.addEventListener('input', onField);
