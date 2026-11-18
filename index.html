@@ -42,6 +42,19 @@
   #app.in-form #tabs { display: none; }
   .fab { position: fixed; right: 16px; bottom: calc(72px + env(safe-area-inset-bottom)); background: var(--accent); color: #fff; border-radius: 28px; padding: 13px 18px; font-weight: 600; box-shadow: 0 4px 10px rgba(0,0,0,.25); }
   .desk { display: none; }
+  .fabs { position: fixed; right: 12px; bottom: calc(72px + env(safe-area-inset-bottom)); max-width: calc(100% - 24px); display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+  .fabs .row { display: flex; gap: 8px; }
+  .fabs .fab { position: static; }
+  .pfab { background: #fff; color: var(--accent); border: 1px solid var(--accent); border-radius: 28px; padding: 12px 16px; font-weight: 600; box-shadow: 0 4px 10px rgba(0,0,0,.25); }
+  .pfab[disabled] { opacity: .55; }
+  .fabs .photo-note { background: rgba(255,255,255,.96); border-radius: 8px; padding: 4px 8px; margin: 0; font-size: 11px; text-align: right; box-shadow: 0 1px 4px rgba(0,0,0,.18); }
+  .fabpad { height: 56px; }
+  .warn, .ask { background: var(--amber-soft); color: var(--amber); border-radius: 10px; padding: 9px 12px; margin: 8px 0 0; font-size: 14px; overflow-wrap: anywhere; }
+  .hint.miss { color: var(--red); }
+  .thumb { display: block; }
+  .thumb img { display: block; max-width: 100%; max-height: 110px; border-radius: 8px; border: 1px solid var(--line); }
+  .thumb.big img { max-height: none; width: 100%; }
+  img.full { display: block; width: 100%; border-radius: 8px; border: 1px solid var(--line); }
 
   /* pieces */
   .sum { display: flex; gap: 8px; margin-bottom: 10px; }
@@ -119,7 +132,7 @@
     #panel .bar .act { color: var(--accent); font-weight: 600; }
     #panel .body { padding: 10px 16px 30px; }
     #panel .box { background: var(--bg); } #panel .card { background: var(--bg); }
-    .fab { display: none; } .desk { display: block; }
+    .fab, .fabs, .fabpad { display: none; } .desk { display: block; }
     .sum { max-width: 420px; }
     #toast { bottom: 30px; }
   }
@@ -144,6 +157,7 @@
   <section class="pane" id="panel"></section>
 </div>
 <div id="toast" role="status" hidden></div>
+<input type="file" id="photo-file" accept="image/*" hidden>
 <script>
 // Deadline Tracker: the page. All data comes from the Apps Script web app; nothing personal is in this file.
 // The deployment id (s) and the OAuth client id (c) come after # in the link of the first opening and are
@@ -158,6 +172,10 @@
   var loadedAt = 0, busy = false, toastTimer = 0;
   var reloading = false;                // after a network error on a save: the data is being read again, Save is off
   var TIMEOUT = 30000;                  // a request without an answer is cut after this many milliseconds
+  var PHOTO_TIMEOUT = 60000;            // the same for reading a photo, a save with a photo and showing a photo
+  var PHOTO_SIDE = 1600;                // a photo is shrunk to this many pixels on its long side before it is sent
+  var PHOTO_NOTE = 'Само документи за коли. Скрий ЕГН при снимане. Лични карти и паспорти не се снимат.';
+  var photoBusy = false, photoJob = null;   // a photo is being read; where "От снимка" was pressed
   var $ = function (id) { return document.getElementById(id); };
 
   // ---------- configuration ----------
@@ -210,6 +228,11 @@
   function typeOf(d) { return byId(S.types, d.type_id) || { name: '?' }; }
   function objOf(d) { return byId(S.objects, d.object_id) || { name: '?' }; }
   function catOf(o) { return byId(S.categories, o.category_id) || { name: '?' }; }
+  function isCar(o) { return !!o && yes(catOf(o).vehicle); }   // photos are only for the categories with a registration plate
+  function photoBtn(cls, label, type) {
+    return '<button class="' + cls + '" data-act="photo"' + (type ? ' data-type="' + esc(type) + '"' : '') + (photoBusy ? ' disabled' : '') + '>' + (label || 'От снимка') + '</button>';
+  }
+  function photoNote(cls) { return '<div class="hint photo-note' + (cls ? ' ' + cls : '') + '">' + PHOTO_NOTE + '</div>'; }
   function toast(text) {
     $('toast').textContent = text; $('toast').hidden = false;
     clearTimeout(toastTimer); toastTimer = setTimeout(function () { $('toast').hidden = true; }, 2600);
@@ -245,9 +268,10 @@
   function netError(text) { var e = new Error(text); e.net = true; return e; }
   function post(fn, data) {
     var ctrl = window.AbortController ? new AbortController() : null, late = false;
-    var timer = setTimeout(function () { late = true; if (ctrl) ctrl.abort(); }, TIMEOUT);
-    // a read ('state') writes nothing, so its message does not speak of a record
-    var silent = function () { return netError('Сървърът не отговори.' + (fn === 'state' ? '' : ' Провери дали записът е минал, преди да опиташ пак.')); };
+    var photo = fn === 'extractPhoto' || fn === 'photo', read = fn === 'state' || photo;
+    var timer = setTimeout(function () { late = true; if (ctrl) ctrl.abort(); }, (photo || (data && data.photo_data)) ? PHOTO_TIMEOUT : TIMEOUT);
+    // a read writes nothing, so its message does not speak of a record
+    var silent = function () { return netError('Сървърът не отговори.' + (read ? '' : ' Провери дали записът е минал, преди да опиташ пак.')); };
     return fetch(cfg.url, {
       method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, signal: ctrl ? ctrl.signal : undefined,
       body: JSON.stringify({ fn: fn, idToken: cfg.dev ? cfg.token : idToken, data: data || {} })
@@ -277,7 +301,7 @@
       }) : j;
     }).then(function (j) {
       if (fn !== 'state') seq++;
-      if (!j.ok) throw new Error(j.error || 'Грешка.');
+      if (!j.ok) { var refused = new Error(j.error || 'Грешка.'); refused.code = j.code || ''; throw refused; }   // code: which refusal of the photo actions
       if (fn === 'state') { if (mine === seq || !S) S = j.result; } else if (j.result && j.result.state) S = j.result.state;
       loadedAt = Date.now();
       return j.result;
@@ -376,21 +400,25 @@
       '<div class="empty">' + (F.history ? 'Няма заменени или закрити срокове.' : (objects.length ? 'Няма активни срокове.' : 'Започни с нов обект в „Обекти“.')) + '</div>';
     h += '<div class="hint" style="text-align:center;margin-top:12px">' + (F.history ? 'Показани са заменените и закритите' : 'Показани са активните') +
       ' · <button class="link" data-act="history">' + (F.history ? 'Активни' : 'История') + '</button></div>';
-    if (objects.length) h += '<button class="fab" data-act="new-deadline">+ Нов срок</button>';
-    return { title: 'Срокове', action: objects.length ? ['+ Нов срок', 'new-deadline', 'desk'] : null, html: h };
+    var cars = objects.some(isCar);
+    if (cars) h = photoNote('desk') + h + '<div class="fabpad"></div>';
+    if (objects.length) h += '<div class="fabs"><div class="row">' + (cars ? photoBtn('pfab') : '') + '<button class="fab" data-act="new-deadline">+ Нов срок</button></div>' +
+      (cars ? photoNote() : '') + '</div>';
+    return { title: 'Срокове', action: objects.length ? ['+ Нов срок', 'new-deadline', 'desk'] : null, more: cars ? photoBtn('act desk') : '', html: h };
   };
 
   VIEWS.deadline = function (p) {
     var d = byId(S.deadlines, p.id), t = typeOf(d), o = objOf(d), st = stText(d);
     var own = String(d.remind_days || '').trim();
     var rec = String(d.recipients || '').split(/[,\s]+/).filter(String).map(function (id) { var x = byId(S.people, id); return x ? x.name : id; });
-    var h = '<div class="box">' +
+    var h = (p.warn ? '<div class="warn" style="margin:0 0 10px">' + esc(p.warn) + '</div>' : '') + '<div class="box">' +
       kv('Състояние', '<span class="pill p-' + st.c + '">' + ((st.c === 'green' && st.b !== 'валиден' ? 'валиден · ' : '') + (st.a + ' ' + st.b).trim()) + '</span>') +
       kv('Обект', esc(o.name) + (o.reg_number ? ' · ' + esc(plate(o.reg_number)) : '')) +
       (d.valid_from ? kv('Валиден от', fmtDate(d.valid_from)) : '') +
       (d.valid_to ? kv('Валиден до', fmtDate(d.valid_to)) : '') +
       (has(d.km_limit) ? kv('Праг в километри', num(d.km_limit) + ' км') : '') +
       (d.note ? kv('Описание', esc(d.note)) : '') +
+      (has(d.photo) ? kv('Снимка', '<button class="btn small" data-act="view-photo"' + (p.loading ? ' disabled' : '') + '>Виж снимката</button>') : '') +
       (yes(t.track_date) ? kv('Напомняне', dayList(own || t.remind_days) + ' преди' + (own ? ' (собствени)' : ' (по вида)')) : '') +
       (yes(t.track_km) && has(d.km_limit) ? kv('По километри', num(t.km_before || 0) + ' км преди прага') : '') +
       kv('Получатели', esc(rec.join(', '))) +
@@ -413,27 +441,55 @@
     return { title: t.name, html: h };
   };
 
+  // The photo of a deadline, as the script returned it. It is not kept: every opening asks for it again.
+  VIEWS.pic = function (p) {
+    return { title: 'Снимка', html: '<img class="full" alt="" src="data:' + esc(p.mime) + ';base64,' + esc(p.data) + '">' };
+  };
+
   VIEWS.dform = function (p) {
     var m = p.m, locked = p.mode !== 'new';
     var objects = S.objects.filter(function (o) { return yes(o.active) || o.id === m.object_id; });
     var o = byId(S.objects, m.object_id);
-    var types = o ? S.types.filter(function (t) { return t.category_id === o.category_id && (yes(t.active) || t.id === m.type_id); }) : [];
-    if (!byId(types, m.type_id)) m.type_id = types.length ? types[0].id : '';
+    var ph = p.ph, read = !!ph && ph.read;
+    if (ph) objects = objects.filter(isCar);   // a photo goes only with a deadline of a car
+    var types = S.types.filter(function (t) {
+      // without a car (the plate of the photo is not on the list): the types of the categories with plates
+      return (o ? t.category_id === o.category_id : (read && isCar(t))) && (yes(t.active) || t.id === m.type_id);
+    });
+    // after a photo was read the type is never chosen for the user: one that was not read stays without a choice
+    if (!byId(types, m.type_id)) m.type_id = (types.length && !read) ? types[0].id : '';
     var t = byId(types, m.type_id);
-    var h = '<label class="f">Обект</label><select data-f="object_id" data-re="1"' + (locked ? ' disabled' : '') + '>' +
+    var h = (!ph && p.mode !== 'edit' && isCar(o)) ? photoBtn('btn ghost', 'Попълни от снимка').replace('class="', 'style="margin-top:0" class="') + photoNote() : '';
+    if (ph && !ph.drop) {
+      h += '<div class="ph-top"><button class="thumb' + (ph.zoom ? ' big' : '') + '" data-act="zoom" aria-label="Снимка"><img alt="" src="data:' + ph.mime + ';base64,' + ph.data + '"></button>' +
+        (read ? '<div class="hint">Провери всяко поле по документа.</div>' : '') + '</div>';
+      if (read && ph.fields.confidence !== 'high') h += '<div class="warn">Снимката се чете трудно. Провери внимателно.' + (ph.fields.note ? ' ' + esc(ph.fields.note) : '') + '</div>';
+    }
+    if (read) h += plateNote(p, o);
+    if (!ph && p.mode === 'edit' && isCar(o) && !has((byId(S.deadlines, m.id) || {}).photo)) {
+      h += '<button class="btn ghost" style="margin-top:0" data-act="photo-add">Добави снимка</button>' + photoNote();
+    }
+    h += '<label class="f">Обект</label><select data-f="object_id" data-re="1"' + (locked ? ' disabled' : '') + '>' + (ph && !o ? '<option value="" selected></option>' : '') +
       S.categories.map(function (c) {
         var list = objects.filter(function (x) { return x.category_id === c.id; });
         return list.length ? '<optgroup label="' + esc(c.name) + '">' + list.map(function (x) {
           return '<option value="' + esc(x.id) + '"' + (x.id === m.object_id ? ' selected' : '') + '>' + esc(x.name) + (x.reg_number ? ' · ' + esc(plate(x.reg_number)) : '') + '</option>';
         }).join('') + '</optgroup>' : '';
       }).join('') + '</select>';
-    h += '<label class="f">Вид срок</label><select data-f="type_id" data-re="1"' + (locked ? ' disabled' : '') + '>' + types.map(function (x) {
+    h += '<label class="f">Вид срок</label><select data-f="type_id" data-re="1"' + (locked ? ' disabled' : '') + '>' + (read && !t ? '<option value="" selected></option>' : '') + types.map(function (x) {
       return '<option value="' + esc(x.id) + '"' + (x.id === m.type_id ? ' selected' : '') + '>' + esc(x.name) + '</option>';
-    }).join('') + '</select>';
-    if (!t) h += '<div class="err">За тази категория няма активни видове срокове. Добави вид от „Настройки“.</div>';
+    }).join('') + '</select>' + mark(p, 'type_id');
+    if (!t && !(read && types.length)) h += '<div class="err">За тази категория няма активни видове срокове. Добави вид от „Настройки“.</div>';
     if (t && yes(t.track_date)) {
-      h += '<div class="two"><div><label class="f">Валиден от</label><input type="date" data-f="valid_from" value="' + esc(m.valid_from) + '"></div>' +
-        '<div><label class="f">Валиден до</label><input type="date" data-f="valid_to" value="' + esc(m.valid_to) + '"></div></div>';
+      h += '<div class="two"><div><label class="f">Валиден от</label><input type="date" data-f="valid_from" value="' + esc(m.valid_from) + '">' + mark(p, 'valid_from') + '</div>' +
+        '<div><label class="f">Валиден до</label><input type="date" data-f="valid_to" value="' + esc(m.valid_to) + '">' + mark(p, 'valid_to') + '</div></div>';
+    }
+    // the odometer reading printed on the document: written to the log with the deadline unless the box is unticked
+    if (read && ph.odo && p.mode !== 'edit') {
+      h += '<div class="box odo-doc" style="margin-top:10px;padding:8px 12px"><div class="hint odo-text" style="margin:0">Показание на километража от документа: ' + num(ph.odo.km) + ' км' +
+        (ph.odo.date ? ' на ' + fmtDate(ph.odo.date) : '') + '</div>' + sw('odo_on', 'Запиши в дневника на километража', m.odo_on) +
+        '<div class="two"><div><label class="f">Километри</label><input type="text" inputmode="numeric" data-f="odo_km" value="' + esc(m.odo_km) + '"' + (m.odo_on ? '' : ' disabled') + '></div>' +
+        '<div><label class="f">Дата</label><input type="date" data-f="odo_date" max="' + esc(S.today) + '" value="' + esc(m.odo_date) + '"' + (m.odo_on ? '' : ' disabled') + '></div></div></div>';
     }
     if (t && yes(t.track_km)) {
       var odo = o && o.odometer;
@@ -450,8 +506,25 @@
       h += '<label class="f">Собствени дни за напомняне (по избор)</label><input type="text" inputmode="numeric" data-f="remind_days" placeholder="по вида: ' +
         esc(t.remind_days) + '" value="' + esc(m.remind_days) + '">';
     }
+    var had = existing(p);
+    if (had) {
+      var keep = ph.choice === 'new';
+      h += '<div class="ask renew-ask">За ' + esc(o.name) + ' вече има активен срок „' + esc(t.name) + '“' +
+        (had.valid_to ? ' до ' + fmtDate(had.valid_to) : has(had.km_limit) ? ' с праг ' + num(had.km_limit) + ' км' : '') + '.</div><div class="chips wrap" style="margin-top:6px">' +
+        '<button class="chip' + (keep ? '' : ' on') + '" data-act="renew-choice" data-id="renew">' + (keep ? '' : '✓ ') + 'Поднови го (старият става заменен)</button>' +
+        '<button class="chip' + (keep ? ' on' : '') + '" data-act="renew-choice" data-id="new">' + (keep ? '✓ ' : '') + 'Запиши като отделен срок</button></div>';
+    }
     h += formEnd(p, !t);
-    return { title: p.mode === 'new' ? 'Нов срок' : p.mode === 'renew' ? 'Подновяване' : 'Поправка на срок', html: h };
+    var title = p.mode === 'new' ? 'Нов срок' : p.mode === 'renew' ? 'Подновяване' : 'Поправка на срок';
+    return { title: ph && ph.read ? title + ' от снимка' : title, html: h };
+  };
+
+  // Reading a photo: the wait, or the error with what can be done next. The form opens only after a read answer.
+  VIEWS.photo = function (p) {
+    if (p.wait) return { title: 'От снимка', html: '<div class="empty">Разчитане на снимката...</div>' };
+    return { title: 'От снимка', html: '<div class="err" role="alert" style="margin-top:0">' + esc(p.error) + '</div>' +
+      (p.code === 'photo_limit' ? '' : '<button class="btn" data-act="photo-again">Опитай пак</button>') +
+      '<button class="btn ghost" data-act="photo-manual">Въведи ръчно</button>' };
   };
 
   VIEWS.objects = function () {
@@ -488,8 +561,10 @@
         return x.deadline_id
           ? '<button class="li" data-act="deadline" data-id="' + esc(x.deadline_id) + '"><div>' + esc(x.type_name) + '<small>' + sub + '</small></div>' + pill + '<span class="go">›</span></button>'
           : '<div class="li"><div>' + esc(x.type_name) + '<small>' + sub + '</small></div>' + pill +
-            (yes(o.active) ? '<button class="btn small" data-act="new-deadline" data-type="' + esc(x.type_id) + '">Въведи</button>' : '') + '</div>';
+            (yes(o.active) ? '<button class="btn small" data-act="new-deadline" data-type="' + esc(x.type_id) + '">Въведи</button>' +
+              (isCar(o) ? photoBtn('btn small ghost', '', x.type_id) : '') : '') + '</div>';
       }).join('') + '</div>';
+      if (yes(o.active) && isCar(o) && o.mandatory.some(function (x) { return !x.deadline_id; })) h += photoNote();
     }
     if (o.odometer) {
       var k = o.odometer;
@@ -506,7 +581,10 @@
     var others = sortActive(mine.filter(function (d) { return d.status === 'active' && shown.indexOf(d.id) < 0; }));
     h += '<div class="sec">' + (o.mandatory.length ? 'Други срокове' : 'Срокове') + '</div>' +
       (others.map(function (d) { return card(d, false); }).join('') || '<div class="hint" style="margin-bottom:8px">Няма.</div>');
-    if (yes(o.active)) h += '<button class="btn ghost" data-act="new-deadline">+ Нов срок за ' + esc(o.name) + '</button>';
+    if (yes(o.active)) {
+      h += isCar(o) ? '<div class="btns"><button class="btn ghost" data-act="new-deadline">+ Нов срок за ' + esc(o.name) + '</button>' + photoBtn('btn ghost') + '</div>' + photoNote()
+        : '<button class="btn ghost" data-act="new-deadline">+ Нов срок за ' + esc(o.name) + '</button>';
+    }
     var past = mine.filter(function (d) { return d.status !== 'active'; }).sort(function (a, b) { return String(b.closed_at).localeCompare(String(a.closed_at)); });
     if (past.length) h += '<div class="sec">Минали срокове</div>' + past.slice(0, 20).map(function (d) { return card(d, false); }).join('');
     return { title: o.name, action: ['Поправи', 'edit-object'], html: h };
@@ -615,7 +693,41 @@
     return '<label class="sw' + (disabled ? ' dis' : '') + '"><span>' + label + '</span><input type="checkbox" data-f="' + field + '" data-re="1"' +
       (on ? ' checked' : '') + (disabled ? ' disabled' : '') + '></label>';
   }
+  // A new deadline from a read photo, when the car has an active deadline of the same type: that deadline
+  // (the one with the latest end date, as the script picks it), otherwise null. The page asks whether the photo renews it.
+  function existing(p) {
+    var best = null, m = p.m;
+    if (p.v !== 'dform' || p.mode !== 'new' || !p.ph || !p.ph.read || !m.object_id || !m.type_id) return null;
+    S.deadlines.forEach(function (d) {
+      if (d.status !== 'active' || d.object_id !== m.object_id || d.type_id !== m.type_id) return;
+      if (!best || String(d.valid_to || '') > String(best.valid_to || '')) best = d;
+    });
+    return best;
+  }
+  // The line under a field of a form filled from a photo: read from the photo, or not read. Gone once the user changes the field.
+  function mark(p, f) {
+    var s = p.ph && p.ph.read && p.ph.src[f];
+    return '<div data-mark="' + f + '"' + (s === 'photo' ? ' class="hint">от снимката' : s === 'unread' ? ' class="hint miss">Не е разчетено от снимката. Въведи го по документа.' : ' hidden>') + '</div>';
+  }
+  // The plate read from the photo against the list of cars. Only an exact match chooses the car; a car that
+  // looks like it is named and never chosen. On a renewal the car is fixed and a different plate is only pointed out.
+  function plateNote(p, o) {
+    var plt = p.ph.plate || {}, n = plt.reg_number ? esc(plate(plt.reg_number)) : '', t;
+    var car = function (id) { var x = byId(S.objects, id); return x ? esc(x.name) + ' (' + esc(plate(x.reg_number)) + ')' : ''; };
+    var line = function (text, red) { return '<div class="hint plate-note' + (red ? ' miss' : '') + '">' + text + '</div>'; };
+    if (p.mode !== 'new') {
+      if (!n) return line('Номерът не е разчетен.');
+      return o && String(o.reg_number) === String(plt.reg_number) ? line('Номер от снимката: ' + n + '. Съвпада с ' + esc(o.name) + '.')
+        : line('Номерът от снимката (' + n + ') не е на тази кола.', true);
+    }
+    if (!n) return line('Номерът не е разчетен. Избери колата от списъка.');
+    if (plt.match === 'exact' && byId(S.objects, plt.object_id)) return line('Номер от снимката: ' + n + '. Съвпада с ' + esc(byId(S.objects, plt.object_id).name) + '.');
+    t = (plt.near || []).map(car).filter(String);
+    return line('Номер от снимката: ' + n + '. Няма кола с този номер. Избери колата от списъка.' + (t.length ? ' Прилича на ' + t.join(' и ') + '.' : '') +
+      ' <button class="link" data-tab="objects">Колата я няма? Добави я в Обекти.</button>');
+  }
   function formEnd(p, disabled) {
+    var noPhoto = p.code === 'photo_save' && p.ph && !p.ph.drop ? '<button class="btn ghost" data-act="save-no-photo"' + (busy || reloading ? ' disabled' : '') + '>Запази без снимка</button>' : '';
     // the question about a limit in kilometres under the present value takes the place of the Save button
     if (p.ask) {
       return '<div class="err" role="alert">Прагът е под ' + (p.est ? 'сегашната оценка (около ' : 'сегашното показание (') + num(p.ask) + ' км). Въвежда се показанието, при което срокът изтича, например ' +
@@ -623,7 +735,7 @@
         '<div class="btns"><button class="btn ghost" data-act="km-fix">Поправи прага</button><button class="btn" data-act="km-save">Запиши въпреки това</button></div>';
     }
     return (p.error ? '<div class="err" role="alert">' + esc(p.error) + '</div>' : '') +
-      '<button class="btn" style="margin-top:16px" data-act="save"' + (busy || reloading || disabled ? ' disabled' : '') + '>' + (busy ? 'Записва се...' : 'Запази') + '</button>';
+      '<button class="btn" style="margin-top:16px" data-act="save"' + (busy || reloading || disabled ? ' disabled' : '') + '>' + (busy ? 'Записва се...' : 'Запази') + '</button>' + noPhoto;
   }
 
   // ---------- drawing ----------
@@ -631,7 +743,7 @@
   function pane(view, withBack) {
     var r = VIEWS[view.v](view);
     return '<div class="bar">' + (withBack ? '<button class="back" data-act="back" aria-label="Назад">‹</button>' : '') + '<span class="ttl">' + esc(r.title) + '</span>' +
-      (r.action ? '<button class="act' + (r.action[2] ? ' ' + r.action[2] : '') + '" data-act="' + r.action[1] + '">' + r.action[0] + '</button>' : '') + '</div><div class="body">' + r.html + '</div>';
+      (r.more || '') + (r.action ? '<button class="act' + (r.action[2] ? ' ' + r.action[2] : '') + '" data-act="' + r.action[1] + '">' + r.action[0] + '</button>' : '') + '</div><div class="body">' + r.html + '</div>';
   }
   // behind: only what is under the open screen is drawn again, the panel stays untouched
   function render(behind) {
@@ -639,7 +751,7 @@
     // a screen whose record is gone (for example after a reload of the data) falls back to its tab
     stack = stack.filter(function (v, i) {
       if (i === 0) return true;
-      if (v.v === 'deadline') return !!byId(S.deadlines, v.id);
+      if (v.v === 'deadline' || v.v === 'pic') return !!byId(S.deadlines, v.id);
       if (v.v === 'object' || v.v === 'odo') return !!byId(S.objects, v.id);
       return true;
     });
@@ -705,6 +817,11 @@
           remind_days: yes(t.track_date) ? m.remind_days : '' };
       };
       var m = p.m, data = fields(m);
+      // the photo goes with the deadline: the script writes it to Drive only after the deadline passed its checks
+      if (p.ph && !p.ph.drop && isCar(byId(S.objects, m.object_id))) data.photo_data = { mime: p.ph.mime, data: p.ph.data };
+      if (p.ph && p.ph.read && p.ph.odo && m.odo_on && p.mode !== 'edit') data.odometer = { date: m.odo_date, km: digits(m.odo_km) };
+      var had = existing(p);
+      if (had && p.ph.choice !== 'new') { data.id = had.id; return ['renewDeadline', data, 1, 'Срокът е подновен.']; }   // "Поднови го"
       if (p.mode === 'new') { data.object_id = m.object_id; data.type_id = m.type_id; return ['createDeadline', data, 1, 'Срокът е записан.']; }
       if (p.mode === 'renew') { data.id = m.id; return ['renewDeadline', data, 2, 'Срокът е подновен.']; }
       // an edit sends only what was changed in the form, so that a save from an older copy does not put back
@@ -757,20 +874,106 @@
   function save(el, anyway) {
     var p = top();
     if (busy || reloading || !SAVE[p.v]) return;
+    if (p.v === 'dform' && !p.m.object_id) { p.error = 'Избери обект.'; p.code = ''; return render(); }
     p.ask = anyway ? 0 : underOdometer(p);
     if (p.ask) { p.error = ''; render(); return $('panel').querySelector('[data-act="km-fix"]').focus(); }
     var job = SAVE[p.v](p);
     if (!job[0]) { toast(job[3]); return back(job[2]); }   // nothing to send
-    busy = true; p.error = ''; render();
+    busy = true; p.error = ''; p.code = ''; render();
     call(job[0], job[1]).then(function (res) {
       busy = false;
       if (p.v === 'cform' && res.id) F.cat = res.id;
+      // the deadline is written and the reading of the document is not: the screen of the deadline says so, with the
+      // reason when the checks refused the reading
+      if (res.odometer && !res.odometer.ok && res.id && top() === p) {
+        stack[stack.length - 1] = { v: 'deadline', id: res.id, warn: 'Срокът е записан. Показанието на километража не е записано' + (res.odometer.error ? ': ' + res.odometer.error : '.') };
+        return render();
+      }
       toast(job[3]);
       // a new object: its screen takes the place of the form, so the deadlines can be entered at once
       if (top() === p && p.v === 'oform' && !p.m.id && res.id) { stack[stack.length - 1] = { v: 'object', id: res.id }; render(); }
       else if (top() === p) back(job[2]); else render();
-    }, function (err) { busy = false; reloading = !!err.net; p.error = err.message; render(); refresh(); });
+    }, function (err) { busy = false; reloading = !!err.net; p.error = err.message; p.code = err.code || ''; render(); refresh(); });
   }
+
+  // ---------- entry from a photo ----------
+  // The chosen file is drawn on a canvas, shrunk to PHOTO_SIDE on its long side, and sent as a JPEG.
+  function shrink(file) {
+    return new Promise(function (resolve, reject) {
+      var url = URL.createObjectURL(file), img = new Image();
+      var fail = function () { URL.revokeObjectURL(url); var e = new Error('Файлът не е снимка (JPEG или PNG).'); e.code = 'photo_file'; reject(e); };
+      img.onload = function () {
+        var k = Math.min(1, PHOTO_SIDE / Math.max(img.naturalWidth, img.naturalHeight, 1)), c = document.createElement('canvas');
+        c.width = Math.max(1, Math.round(img.naturalWidth * k)); c.height = Math.max(1, Math.round(img.naturalHeight * k));
+        var g = c.getContext('2d');
+        g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.drawImage(img, 0, 0, c.width, c.height);
+        var d = c.toDataURL('image/jpeg', 0.85), head = 'data:image/jpeg;base64,';
+        if (d.indexOf(head) !== 0) return fail();
+        URL.revokeObjectURL(url);
+        resolve({ mime: 'image/jpeg', data: d.slice(head.length) });
+      };
+      img.onerror = fail;
+      img.src = url;
+    });
+  }
+  // job: { form (the open form, when the photo fills it), object_id, type_id, file or photo }. One request per press;
+  // the same photo is sent again only with "Опитай пак".
+  function photoStart(job) {
+    var view = top().v === 'photo' ? top() : null;
+    if (!view) { view = { v: 'photo' }; go(view); }
+    view.job = job; view.wait = true; view.error = ''; view.code = '';
+    photoBusy = true; render();
+    (job.photo ? Promise.resolve(job.photo) : shrink(job.file)).then(function (photo) {
+      job.photo = photo;
+      return call('extractPhoto', { mime: photo.mime, data: photo.data });
+    }).then(function (res) {
+      photoBusy = false; view.wait = false;
+      if (top() !== view) return render();   // the user went away while waiting: the answer is dropped
+      photoDone(view, res);
+    }, function (err) {
+      photoBusy = false; view.wait = false; view.error = err.message; view.code = err.code || '';
+      if (view.code === 'photo_file') job.photo = null;   // "Опитай пак" asks for another file
+      if (!$('app').hidden) render();
+    });
+  }
+  // The form of a deadline, filled with what was read. Nothing is written: only "Запази" does that.
+  function photoDone(view, res) {
+    var job = view.job;
+    var p = job.form || { v: 'dform', mode: 'new', fromRow: !!job.type_id, m: deadlineModel({ object_id: job.object_id || firstObject(), type_id: job.type_id }, 'new') };
+    fillFromPhoto(p, job.photo, res);
+    if (job.form) back(1); else { stack[stack.length - 1] = p; render(); }
+  }
+  function fillFromPhoto(p, photo, res) {
+    var f = res.fields || {}, plt = res.plate || {}, m = p.m;
+    // the start date is not required: when the document has none, the field is just empty, without the red line
+    var src = { valid_from: f.valid_from ? 'photo' : '', valid_to: f.valid_to ? 'photo' : 'unread' };
+    p.ph = { mime: photo.mime, data: photo.data, read: true, fields: f, plate: plt, src: src };
+    p.error = ''; p.code = ''; p.ask = 0;
+    if (p.mode === 'new') {
+      m.object_id = (plt.match === 'exact' && byId(S.objects, plt.object_id)) ? plt.object_id : '';   // any other plate: the user chooses the car
+      // the type read from the photo; when it was not read, the type of the row "Въведи" the user started from, otherwise none
+      var typeRead = !!res.type_id && !!byId(S.types, res.type_id);
+      if (typeRead) m.type_id = res.type_id; else if (!p.fromRow) m.type_id = '';
+      src.type_id = typeRead ? 'photo' : (m.type_id ? '' : 'unread');
+    }
+    m.valid_from = f.valid_from || ''; m.valid_to = f.valid_to || '';
+    // the kilometres of the document, with the start date of the document as the date of the reading
+    p.ph.odo = f.odometer_km ? { km: f.odometer_km, date: f.valid_from || '' } : null;
+    m.odo_on = !!p.ph.odo; m.odo_km = p.ph.odo ? String(f.odometer_km) : ''; m.odo_date = p.ph.odo ? p.ph.odo.date : '';
+  }
+  function firstObject() { return F.object || (S.objects.filter(function (o) { return yes(o.active); })[0] || {}).id; }
+  $('photo-file').addEventListener('change', function () {
+    var file = this.files && this.files[0], job = photoJob;
+    photoJob = null;
+    if (!file || !job || photoBusy || !S) return;
+    if (job.attach) {
+      // "Поправи": the photo is only attached to the open form, nothing is read from it
+      return shrink(file).then(function (photo) { job.form.ph = { mime: photo.mime, data: photo.data, read: false }; job.form.error = ''; },
+        function (err) { job.form.error = err.message; }).then(function () { job.form.code = ''; if (top() === job.form) render(); });
+    }
+    job.file = file; job.photo = null;
+    photoStart(job);
+  });
   // After a refused write the copy on the screen may be stale: the data is read again, the open screen and its error stay.
   // An open form is not drawn again (the user may be typing in it), only the list behind it.
   // After a network error on a save the record may have gone through: Save stays off until this reload is over,
@@ -797,7 +1000,7 @@
       if (top().v === 'deadline' && stack.length === 2) { stack[1] = view; render(); } else go(view);
     },
     'new-deadline': function (el) {
-      var objectId = top().v === 'object' ? top().id : (F.object || (S.objects.filter(function (o) { return yes(o.active); })[0] || {}).id);
+      var objectId = top().v === 'object' ? top().id : firstObject();
       go({ v: 'dform', mode: 'new', m: deadlineModel({ object_id: objectId, type_id: el.getAttribute('data-type') || '' }, 'new') });
     },
     'edit-deadline': function () { var d = byId(S.deadlines, top().id);
@@ -853,6 +1056,48 @@
         avg_km_window_days: S.settings.avg_km_window_days } });
     },
     save: save,
+    'renew-choice': function (el) { var ph = top().ph; if (ph) { ph.choice = el.getAttribute('data-id'); render(); } },
+    zoom: function () { var ph = top().ph; if (ph) { ph.zoom = !ph.zoom; render(); } },
+    'save-no-photo': function () { var p = top(); if (busy || reloading || !p.ph) return; p.ph.drop = true; save(); },   // what was read stays, only the file is not sent
+    // "От снимка": the file chooser (on a phone: the camera or the gallery); the reading starts when a file is chosen
+    photo: function (el) {
+      if (photoBusy) return;
+      var p = top(), input = $('photo-file');
+      photoJob = { form: p.v === 'dform' ? p : null, object_id: p.v === 'object' ? p.id : '', type_id: el.getAttribute('data-type') || '' };
+      input.value = ''; input.click();
+    },
+    'photo-add': function () {
+      var p = top(), input = $('photo-file');
+      if (photoBusy || p.v !== 'dform') return;
+      photoJob = { form: p, attach: true };
+      input.value = ''; input.click();
+    },
+    'view-photo': function () {
+      var p = top();
+      if (p.loading || p.v !== 'deadline') return;
+      p.loading = true; p.error = ''; render();
+      call('photo', { id: p.id }).then(function (res) {
+        p.loading = false;
+        if (top() !== p) return render();
+        go({ v: 'pic', id: p.id, mime: res.mime, data: res.data });
+      }, function (err) { p.loading = false; p.error = err.message; if (!$('app').hidden) render(); });
+    },
+    'photo-again': function () {
+      var job = top().job, input = $('photo-file');
+      if (photoBusy || !job) return;
+      if (job.photo) return photoStart(job);
+      photoJob = job; input.value = ''; input.click();
+    },
+    'photo-manual': function () {
+      var job = top().job;
+      if (photoBusy || !job) return;
+      // the photo stays with the deadline and is written on "Запази"; a file that is not a photo is not kept
+      var ph = job.photo ? { mime: job.photo.mime, data: job.photo.data, read: false } : null;
+      if (job.form) { job.form.ph = ph; return back(1); }
+      var first = byId(S.objects, firstObject()), car = isCar(first) ? first : S.objects.filter(function (o) { return yes(o.active) && isCar(o); })[0];
+      stack[stack.length - 1] = { v: 'dform', mode: 'new', ph: ph, m: deadlineModel({ object_id: job.object_id || (ph && car ? car.id : firstObject()), type_id: job.type_id }, 'new') };
+      render();
+    },
     'km-fix': function () {
       top().ask = 0; render();
       var f = $('panel').querySelector('[data-f="km_limit"]');
@@ -877,6 +1122,12 @@
     var el = e.target, f = el.getAttribute && el.getAttribute('data-f'), p = top();
     if (!f || !p.m) return;
     p.m[f] = el.type === 'checkbox' ? el.checked : el.value;
+    // a field changed by the user is no longer "from the photo", and one that was not read is no longer empty
+    if (p.ph && p.ph.read && p.ph.src[f] && (p.ph.src[f] === 'photo' || p.m[f])) {
+      p.ph.src[f] = '';
+      var line = $('panel').querySelector('[data-mark="' + f + '"]');
+      if (line) line.outerHTML = mark(p, f);
+    }
     // a change of the limit, the object or the type takes the question about the limit away
     if (p.ask && (f === 'km_limit' || f === 'object_id' || f === 'type_id')) {
       var at = f === 'km_limit' ? el.selectionStart : null;
